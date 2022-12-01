@@ -29,17 +29,23 @@ fn get_total_calories(elves: Vec<Elf>) -> Vec<Calorie> {
     elves.iter().map(|elf| elf.inventory.iter().sum()).collect()
 }
 
-fn get_most_calories(calories: Vec<Calorie>) -> Calorie {
+fn get_most_calories(calories: &Vec<Calorie>) -> Calorie {
     calories.iter().max().unwrap().clone()
 }
 
 fn main() {
     let puzzle_string = load_puzzle();
     let elves = parse_puzzle(puzzle_string);
-    let total_calories = get_total_calories(elves);
-    let most_calories = get_most_calories(total_calories);
+    let mut total_calories = get_total_calories(elves);
+    let most_calories = get_most_calories(&total_calories);
 
     println!("{:?}", most_calories);
+
+    total_calories.sort();
+    let top_3 = total_calories.iter().rev().take(3);
+    let top_3_sum: Calorie = top_3.sum();
+
+    println!("{:?}", top_3_sum);
 }
 
 #[cfg(test)]
