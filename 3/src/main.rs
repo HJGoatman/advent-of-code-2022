@@ -63,8 +63,8 @@ fn parse_rucksacks(s: &str) -> Vec<Rucksack> {
         .collect()
 }
 
-fn get_duplicate_items(rucksack: Rucksack) -> HashSet<Item> {
-    let (compartment_1, compartment_2) = (rucksack.0, rucksack.1);
+fn get_duplicate_items(rucksack: &Rucksack) -> HashSet<Item> {
+    let (compartment_1, compartment_2) = (rucksack.0.clone(), rucksack.1.clone());
     let hash_1: HashSet<Item> = compartment_1.into_iter().collect();
     let hash_2: HashSet<Item> = compartment_2.into_iter().collect();
 
@@ -91,7 +91,7 @@ fn get_priority_map() -> HashMap<Item, Priority> {
 
 fn get_priorities(
     items: Vec<HashSet<Item>>,
-    priority_map: HashMap<Item, Priority>,
+    priority_map: &HashMap<Item, Priority>,
 ) -> Vec<Priority> {
     items
         .iter()
@@ -102,22 +102,56 @@ fn get_priorities(
         .collect()
 }
 
+fn get_common_items(item_sets: Vec<HashSet<&Item>>) -> Vec<&Item> {
+    let mut item_set_iter = item_sets.into_iter();
+    let mut common_items = item_set_iter.next().unwrap();
+
+    for _ in 0..2 {
+        common_items = common_items
+            .intersection(&item_set_iter.next().unwrap())
+            .cloned()
+            .collect();
+    }
+
+    common_items.into_iter().collect()
+}
+
+fn get_badge(group: &[Rucksack]) -> Item {
+    let elves_items: Vec<HashSet<&Item>> = group
+        .iter()
+        .map(|rucksack| rucksack.0.iter().chain(rucksack.1.iter()).collect())
+        .collect();
+
+    let badges: Vec<&Item> = get_common_items(elves_items);
+    badges.get(0).unwrap().clone().clone()
+}
+
+fn get_badges(rucksacks: &Vec<Rucksack>) -> Vec<Item> {
+    rucksacks.chunks(3).map(get_badge).collect()
+}
+
 fn main() {
     let input = load_input();
     let rucksacks = parse_rucksacks(&input);
-    let duplicate_items: Vec<HashSet<Item>> =
-        rucksacks.into_iter().map(get_duplicate_items).collect();
+    let duplicate_items: Vec<HashSet<Item>> = rucksacks.iter().map(get_duplicate_items).collect();
     let priority_map = get_priority_map();
-    let priorities: Vec<Priority> = get_priorities(duplicate_items, priority_map);
+    let priorities: Vec<Priority> = get_priorities(duplicate_items, &priority_map);
     let sum: u32 = priorities.iter().sum();
-    println!("{:?}", sum)
+    println!("{:?}", sum);
+
+    let badges: Vec<Item> = get_badges(&rucksacks);
+    let part_2_sum: u32 = badges
+        .iter()
+        .map(|badge| priority_map.get(badge).unwrap().clone())
+        .sum();
+    println!("{:?}", part_2_sum);
 }
 
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
 
-    use crate::{Item, Rucksack};
+    use crate::{get_badge, parse_rucksacks, Item, Rucksack};
 
     #[test]
     fn test_parse_rucksack() {
@@ -155,8 +189,12 @@ mod tests {
         assert_eq!(Rucksack::from_str(input).unwrap(), expected);
     }
 
-    // #[test]
-    // fn test_get_priorities() {
-    //
-    // }
+    #[test]
+    fn test_get_badge() {
+        let input =
+            "vJrwpWtwJgWrhcsFMMfFFhFp\njqHRNqRjqzjGDLGLrsFMfFZSrLrFZsSL\nPmmdzqPrVvPwwTWBwg";
+        let input_rucksacks = parse_rucksacks(&input);
+        let group = &input_rucksacks[..];
+        assert_eq!(get_badge(group), Item('r'))
+    }
 }
