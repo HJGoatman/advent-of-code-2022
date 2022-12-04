@@ -50,17 +50,29 @@ fn get_fully_contained_pairs(pairs: &Vec<RangePair>) -> Vec<&RangePair> {
         .collect()
 }
 
+fn has_overlapping_pair(range_pair: &&RangePair) -> bool {
+    let (a, b) = range_pair;
+    !(a.end < b.start || a.start > b.end)
+}
+
+fn get_overlapping_pairs(pairs: &Vec<RangePair>) -> Vec<&RangePair> {
+    pairs.into_iter().filter(&has_overlapping_pair).collect()
+}
+
 fn main() {
     let input = load_input();
     let pairs = parse_input(&input);
     let fully_contained_pairs = get_fully_contained_pairs(&pairs);
     let number_of_contained_pairs = fully_contained_pairs.len();
     println!("{:?}", number_of_contained_pairs);
+
+    let overlapping_pairs = get_overlapping_pairs(&pairs);
+    println!("{:?}", overlapping_pairs.len());
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{get_fully_contained_pairs, parse_input, Range, RangePair};
+    use crate::{get_fully_contained_pairs, get_overlapping_pairs, parse_input, Range, RangePair};
 
     fn get_ranges() -> Vec<RangePair> {
         vec![
@@ -89,6 +101,19 @@ mod tests {
             &(Range { start: 6, end: 6 }, Range { start: 4, end: 6 }),
         ];
         let actual = get_fully_contained_pairs(&input);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_get_overlapping_pairs() {
+        let input = get_ranges();
+        let expected = vec![
+            &(Range { start: 5, end: 7 }, Range { start: 7, end: 9 }),
+            &(Range { start: 2, end: 8 }, Range { start: 3, end: 7 }),
+            &(Range { start: 6, end: 6 }, Range { start: 4, end: 6 }),
+            &(Range { start: 2, end: 6 }, Range { start: 4, end: 8 }),
+        ];
+        let actual = get_overlapping_pairs(&input);
         assert_eq!(actual, expected);
     }
 }
