@@ -133,8 +133,32 @@ fn run_instruction<'a>(
     stacks
 }
 
-fn run<'a>(stacks: &'a mut Vec<Stack>, procedure: &[Instruction]) -> &'a mut Vec<Stack> {
-    procedure.to_vec().iter().fold(stacks, run_instruction)
+fn run_instruction_9001<'a>(
+    stacks: &'a mut Vec<Stack>,
+    instruction: &Instruction,
+) -> &'a mut Vec<Stack> {
+    let mut queue = vec![];
+    for _ in 0..instruction.amount {
+        let from = &mut stacks[(instruction.from - 1) as usize];
+        let from_crate = from.stack.pop().unwrap();
+        queue.push(from_crate);
+    }
+
+    let to = &mut stacks[(instruction.to - 1) as usize];
+
+    for _ in 0..instruction.amount {
+        to.stack.push(queue.pop().unwrap())
+    }
+
+    stacks
+}
+
+fn run<'a>(
+    stacks: &'a mut Vec<Stack>,
+    procedure: &[Instruction],
+    processor: &dyn Fn(&'a mut Vec<Stack>, &Instruction) -> &'a mut Vec<Stack>,
+) -> &'a mut Vec<Stack> {
+    procedure.to_vec().iter().fold(stacks, processor)
 }
 
 fn get_top_crates(stacks: &[Stack]) -> String {
@@ -147,9 +171,15 @@ fn get_top_crates(stacks: &[Stack]) -> String {
 fn main() {
     let input = load_input();
     let (mut stacks, procedure) = parse_input(&input);
-    let modified_stacks = run(&mut stacks, &procedure);
+    let modified_stacks = run(&mut stacks, &procedure, &run_instruction);
     let top_crates = get_top_crates(&modified_stacks);
     println!("{}", top_crates);
+
+    // Part 2
+    let (mut stacks_2, _) = parse_input(&input);
+    let modified_stacks_2 = run(&mut stacks_2, &procedure, &run_instruction_9001);
+    let top_crates_2 = get_top_crates(&modified_stacks_2);
+    println!("{}", top_crates_2);
 }
 
 #[cfg(test)]
@@ -330,7 +360,7 @@ mod tests {
             },
         ];
 
-        let actual_stacks = run(&mut input_stacks, &input_procedure);
+        let actual_stacks = run(&mut input_stacks, &input_procedure, &run_instruction);
         assert_eq!(expected_stacks, input_stacks);
     }
 }
