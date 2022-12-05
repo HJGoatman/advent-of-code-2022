@@ -286,7 +286,7 @@ mod tests {
             from: 1,
             to: 3,
         };
-        let mut expected_2 = vec![
+        let expected_2 = vec![
             Stack {
                 id: 1,
                 stack: vec![],
@@ -360,7 +360,7 @@ mod tests {
             },
         ];
 
-        let actual_stacks = run(&mut input_stacks, &input_procedure, &run_instruction);
+        let _actual_stacks = run(&mut input_stacks, &input_procedure, &run_instruction);
         assert_eq!(expected_stacks, input_stacks);
     }
 }
