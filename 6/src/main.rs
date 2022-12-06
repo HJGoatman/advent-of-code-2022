@@ -4,16 +4,16 @@ fn load_input() -> String {
     fs::read_to_string("input.txt").expect("Should have been able to read the file")
 }
 
-fn find_start(stream: &str) -> Option<u32> {
+fn find_start(stream: &str, distinct_characters_amount: usize) -> Option<u32> {
     let mut iterator = stream.chars().enumerate();
-    let mut deque: VecDeque<char> = VecDeque::with_capacity(4);
+    let mut deque: VecDeque<char> = VecDeque::with_capacity(distinct_characters_amount);
 
     'outer: while let Some((start_int, letter)) = iterator.next() {
         deque.push_back(letter);
 
         let deque_length = deque.len();
 
-        if deque_length < 4 {
+        if deque_length < distinct_characters_amount {
             continue;
         }
 
@@ -36,29 +36,64 @@ fn find_start(stream: &str) -> Option<u32> {
 
 fn main() {
     let input = load_input();
-    let start_packet_number = find_start(&input).unwrap();
+    let start_packet_number = find_start(&input, 4).unwrap();
     println!("{:?}", start_packet_number);
+
+    let start_message_marker = find_start(&input, 14).unwrap();
+    println!("{:?}", start_message_marker);
 }
 
 #[cfg(test)]
 mod tests {
     use crate::find_start;
 
-    fn test_part_1(input: &str, expected: Option<u32>) {
-        let actual = find_start(&input);
+    fn test_part(input: &str, expected: Option<u32>, number_distinct: usize) {
+        let actual = find_start(&input, number_distinct);
         assert_eq!(expected, actual);
     }
 
     #[test]
     fn test_find_start() {
-        test_part_1("mjqjpqmgbljsphdztnvjfqwrcgsmlb", Some(7));
+        let part_1_distinct = 4;
+        test_part("mjqjpqmgbljsphdztnvjfqwrcgsmlb", Some(7), part_1_distinct);
 
-        test_part_1("bvwbjplbgvbhsrlpgdmjqwftvncz", Some(5));
+        test_part("bvwbjplbgvbhsrlpgdmjqwftvncz", Some(5), part_1_distinct);
 
-        test_part_1("nppdvjthqldpwncqszvftbrmjlhg", Some(6));
+        test_part("nppdvjthqldpwncqszvftbrmjlhg", Some(6), part_1_distinct);
 
-        test_part_1("nznrnfrfntjfmvfwmzdfjlvtqnbhcprsg", Some(10));
+        test_part(
+            "nznrnfrfntjfmvfwmzdfjlvtqnbhcprsg",
+            Some(10),
+            part_1_distinct,
+        );
 
-        test_part_1("zcfzfwzzqfrljwzlrfnpqdbhtmscgvjw", Some(11));
+        test_part(
+            "zcfzfwzzqfrljwzlrfnpqdbhtmscgvjw",
+            Some(11),
+            part_1_distinct,
+        );
+    }
+
+    #[test]
+    fn test_find_message() {
+        let part_2_distinct = 14;
+
+        test_part("mjqjpqmgbljsphdztnvjfqwrcgsmlb", Some(19), part_2_distinct);
+
+        test_part("bvwbjplbgvbhsrlpgdmjqwftvncz", Some(23), part_2_distinct);
+
+        test_part("nppdvjthqldpwncqszvftbrmjlhg", Some(23), part_2_distinct);
+
+        test_part(
+            "nznrnfrfntjfmvfwmzdfjlvtqnbhcprsg",
+            Some(29),
+            part_2_distinct,
+        );
+
+        test_part(
+            "zcfzfwzzqfrljwzlrfnpqdbhtmscgvjw",
+            Some(26),
+            part_2_distinct,
+        );
     }
 }
