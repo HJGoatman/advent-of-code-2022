@@ -155,21 +155,30 @@ fn get_directory_size(filesystem: &FileSystem) -> FileSize {
     }
 }
 
-fn sum_directory_size(root: &FileSystem) -> FileSize {
+fn sum_directory_size(root: &FileSystem) -> Vec<FileSize> {
     let directories = get_all_directories(&root);
-    directories
-        .iter()
-        .map(get_directory_size)
-        .filter(|size| size <= &100000)
-        .sum()
+    directories.iter().map(get_directory_size).collect()
 }
 
 fn main() {
     let input = load_input();
     let commands = parse_input(&input);
     let filesystem = build_filesystem(&commands);
-    let directory_sizes = sum_directory_size(&filesystem);
-    println!("{}", directory_sizes);
+    let directory_sizes: Vec<FileSize> = sum_directory_size(&filesystem);
+    let directory_sum_lt_1000000: FileSize =
+        directory_sizes.iter().filter(|size| *size <= &100000).sum();
+    println!("{}", directory_sum_lt_1000000);
+
+    let total_disk_space = 70000000;
+    let target_unused = 30000000;
+    let unused_space = total_disk_space - &directory_sizes[0];
+    let minimum_space_needed = target_unused - unused_space;
+    let smallest_viable_directory_size = directory_sizes
+        .into_iter()
+        .filter(|size| size >= &minimum_space_needed)
+        .min()
+        .unwrap();
+    println!("{}", smallest_viable_directory_size)
 }
 
 #[cfg(test)]
