@@ -1,4 +1,6 @@
-use std::{cmp, fs};
+use std::fs;
+
+use nalgebra::{max, DMatrix, DVector, RowDVector};
 
 type TreeHeight = i16;
 
@@ -6,142 +8,129 @@ fn load_input() -> String {
     fs::read_to_string("input.txt").expect("Should have been able to read the file")
 }
 
-fn matrix_transpose(m: &[&[TreeHeight]]) -> Vec<Vec<TreeHeight>> {
-    let mut t = vec![Vec::with_capacity(m.len()); m[0].len()];
-    for r in m {
-        for i in 0..r.len() {
-            t[i].push(r[i]);
-        }
-    }
-    t
+fn parse_row(input: &str) -> RowDVector<TreeHeight> {
+    RowDVector::from_iterator(
+        input.len(),
+        input
+            .chars()
+            .map(|s| s.to_string().parse::<TreeHeight>().unwrap()),
+    )
 }
 
-fn parse_row(input: &str) -> Vec<TreeHeight> {
-    input
-        .chars()
-        .map(|s| s.to_string().parse::<TreeHeight>().unwrap())
-        .collect()
-}
-
-fn parse_input(input: &str) -> Vec<Vec<TreeHeight>> {
-    input
+fn parse_input(input: &str) -> DMatrix<TreeHeight> {
+    let rows: Vec<RowDVector<TreeHeight>> = input
         .split("\n")
         .filter(|a| a != &"")
         .map(parse_row)
-        .collect()
+        .collect();
+    DMatrix::from_rows(&rows)
 }
 
-fn get_rolling_max(matrix: &[&[TreeHeight]]) -> Vec<Vec<TreeHeight>> {
-    let mut output = Vec::new();
-    let mut carry_row = vec![0; matrix.len()];
+fn get_rolling_max_rowwise(matrix: &DMatrix<TreeHeight>, is_downwards: bool) -> DMatrix<bool> {
+    let mut current_max: RowDVector<TreeHeight> = RowDVector::repeat(matrix.ncols(), -1);
 
-    for i in 0..(matrix.len()) {
-        let row = matrix[i];
+    let mut mat = matrix.clone_owned();
 
-        carry_row = carry_row
-            .into_iter()
-            .zip(row.iter())
-            .map(|(a_val, b_val)| -> TreeHeight { cmp::max(a_val, *b_val) })
-            .collect();
-
-        output.push(carry_row.clone());
+    if !is_downwards {
+        let mut stack = Vec::new();
+        matrix.row_iter().for_each(|row| stack.push(row));
+        stack.reverse();
+        mat = DMatrix::from_rows(&stack);
     }
 
-    output
-}
-
-fn apply<A, B>(matrix_a: &[&[B]], matrix_b: &[&[B]], function: &dyn Fn(B, B) -> A) -> Vec<Vec<A>>
-where
-    B: Copy,
-{
-    matrix_a
-        .iter()
-        .zip(matrix_b.iter())
-        .map(|(row_a, row_b)| -> Vec<A> {
-            row_a
-                .into_iter()
-                .zip(row_b.into_iter())
-                .map(|(a, b)| function(*a, *b))
-                .collect()
+    let mut rows: Vec<RowDVector<bool>> = mat
+        .row_iter()
+        .map(|row| {
+            let return_val = row.zip_map(&current_max, |x, y| x > y);
+            current_max = row.zip_map(&current_max, max);
+            return_val
         })
-        .collect()
-}
+        .collect();
 
-fn subtract(a: TreeHeight, b: TreeHeight) -> TreeHeight {
-    a - b
-}
-
-fn or(a: bool, b: bool) -> bool {
-    a || b
-}
-
-fn row_wise_max_diff(matrix: &[&[TreeHeight]]) -> Vec<Vec<TreeHeight>> {
-    let rolling_max = get_rolling_max(matrix);
-    let rolling_max_slice: Vec<&[TreeHeight]> = rolling_max.iter().map(Vec::as_slice).collect();
-
-    apply(matrix, &rolling_max_slice, &subtract)
-}
-
-fn is_visible(matrix: &[&[TreeHeight]]) -> Vec<Vec<bool>> {
-    let difference = row_wise_max_diff(matrix);
-    difference
-        .iter()
-        .map(|row| row.iter().map(|val| val >= &0).collect())
-        .collect()
-}
-
-fn get_visible_trees(grid: Vec<Vec<TreeHeight>>) -> TreeHeight {
-    let top_slice: Vec<&[TreeHeight]> = grid.iter().map(Vec::as_slice).collect();
-    let bottom_slice: Vec<&[TreeHeight]> = top_slice.iter().cloned().rev().collect();
-
-    let grid_transpose = matrix_transpose(&top_slice);
-    let left_slice: Vec<&[TreeHeight]> = grid_transpose.iter().map(Vec::as_slice).collect();
-    let right_slice: Vec<&[TreeHeight]> = left_slice.iter().cloned().rev().collect();
-
-    let top_visible = is_visible(&top_slice);
-    let mut bottom_visible = is_visible(&bottom_slice);
-    bottom_visible = bottom_visible.into_iter().rev().collect();
-    let mut left_visible = is_visible(&left_slice);
-    // left_visible = matrix_transpose(left_visible);
-    let mut right_visible = is_visible(&right_slice);
-    // right_visible = matrix_transpose(right_visible.iter().rev());
-
-    let mut any_visible = vec![vec![false; top_visible[0].len()]; top_visible.len()];
-    for i in 0..top_visible.len() {
-        for j in 0..top_visible[0].len() {
-            any_visible[i][j] = top_visible[i][j]
-                || bottom_visible[i][j]
-                || left_visible[i][j]
-                || right_visible[i][j]
-        }
+    if !is_downwards {
+        rows.reverse();
     }
 
-    let visible_count: TreeHeight = any_visible
-        .into_iter()
-        .map(|row| row.into_iter().filter(|a| *a).count() as TreeHeight)
-        .sum::<TreeHeight>();
+    DMatrix::from_rows(&rows)
+}
 
-    visible_count
+fn get_rolling_max_colwise(matrix: &DMatrix<TreeHeight>, is_downwards: bool) -> DMatrix<bool> {
+    let mut current_max: DVector<TreeHeight> = DVector::repeat(matrix.nrows(), -1);
+
+    let mut mat = matrix.clone_owned();
+
+    if !is_downwards {
+        let mut stack = Vec::new();
+        matrix.column_iter().for_each(|col| stack.push(col));
+        stack.reverse();
+        mat = DMatrix::from_columns(&stack);
+    }
+
+    let mut columns: Vec<DVector<bool>> = mat
+        .column_iter()
+        .map(|col| {
+            let return_val = col.zip_map(&current_max, |x, y| x > y);
+            current_max = col.zip_map(&current_max, max);
+            return_val
+        })
+        .collect();
+
+    if !is_downwards {
+        columns.reverse();
+    }
+
+    DMatrix::from_columns(&columns)
+}
+
+fn is_visible(
+    matrix: &DMatrix<TreeHeight>,
+    is_row_wise: bool,
+    is_downwards: bool,
+) -> DMatrix<bool> {
+    match is_row_wise {
+        true => get_rolling_max_rowwise(matrix, is_downwards),
+        _ => get_rolling_max_colwise(matrix, is_downwards),
+    }
+}
+
+fn get_visible_trees(grid: &DMatrix<TreeHeight>) -> TreeHeight {
+    let from_top = is_visible(grid, true, true);
+    let from_left = is_visible(grid, false, true);
+    let from_bottom = is_visible(grid, true, false);
+    let from_right = is_visible(grid, false, false);
+
+    let combined: DMatrix<TreeHeight> = from_top
+        .zip_map(&from_left, |x, y| x || y)
+        .zip_map(&from_bottom, |x, y| x || y)
+        .zip_map(&from_right, |x, y| x || y)
+        .map(|x| match x {
+            true => 1,
+            _ => 0,
+        });
+
+    combined.sum()
 }
 
 fn main() {
     let input = load_input();
     let grid = parse_input(&input);
-    let visible_count = get_visible_trees(grid);
+    let visible_count = get_visible_trees(&grid);
     println!("{}", visible_count);
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{get_rolling_max, get_visible_trees, parse_input, TreeHeight};
+    use nalgebra::{dmatrix, DMatrix};
 
-    fn get_test_matrix() -> Vec<Vec<TreeHeight>> {
-        vec![
-            vec![3, 0, 3, 7, 3],
-            vec![2, 5, 5, 1, 2],
-            vec![6, 5, 3, 3, 2],
-            vec![3, 3, 5, 4, 9],
-            vec![3, 5, 3, 9, 0],
+    use crate::{get_visible_trees, is_visible, parse_input, TreeHeight};
+
+    fn get_test_matrix() -> DMatrix<TreeHeight> {
+        dmatrix![
+            3, 0, 3, 7, 3;
+            2, 5, 5, 1, 2;
+            6, 5, 3, 3, 2;
+            3, 3, 5, 4, 9;
+            3, 5, 3, 9, 0;
         ]
     }
 
@@ -154,26 +143,70 @@ mod tests {
     }
 
     #[test]
-    fn test_rolling_max() {
+    fn test_is_visible_top() {
         let input = get_test_matrix();
-        let expected = vec![
-            vec![3, 0, 3, 7, 3],
-            vec![3, 5, 5, 7, 3],
-            vec![6, 5, 5, 7, 3],
-            vec![6, 5, 5, 7, 9],
-            vec![6, 5, 5, 9, 9],
+        let expected_top = dmatrix![
+            true, true, true, true, true;
+            false, true, true, false, false;
+            true, false, false, false, false;
+            false, false, false, false, true;
+            false, false, false, true, false;
         ];
-        let actual_refs: Vec<&[TreeHeight]> = input.iter().map(Vec::as_slice).collect();
-        let actual = get_rolling_max(&actual_refs);
-        assert_eq!(expected, actual);
+        let actual_top = is_visible(&input, true, true);
+        assert_eq!(expected_top, actual_top);
+    }
+
+    #[test]
+    fn test_is_visible_right() {
+        let input = get_test_matrix();
+        let expected_right = dmatrix![
+            true, false, false, true , false;
+            true, true , false, false, false;
+            true, false, false, false, false;
+            true, false, true , false, true ;
+            true, true , false, true, false;
+        ];
+        let actual_right = is_visible(&input, false, true);
+        assert_eq!(expected_right, actual_right);
+    }
+
+    #[test]
+    fn test_is_visible_left() {
+        let input = get_test_matrix();
+
+        let expected_left = dmatrix![
+            false, false, false, true , true ;
+            false, false, true , false, true ;
+            true, true , false, true , true ;
+            false, false, false, false, true ;
+            false, false, false, true , true ;
+        ];
+        let actual_left = is_visible(&input, false, false);
+        println!("{}", expected_left);
+        println!("{}", actual_left);
+        assert_eq!(expected_left, actual_left);
+    }
+
+    #[test]
+    fn test_is_vvisible_bottom() {
+        let input = get_test_matrix();
+
+        let expected_bottom = dmatrix![
+            false, false, false, false, false;
+            false, false, false, false, false;
+            true , false, false, false, false;
+            false, false, true , false, true ;
+            true , true , true , true , true ;
+        ];
+        let actual_bottom = is_visible(&input, true, false);
+        assert_eq!(expected_bottom, actual_bottom);
     }
 
     #[test]
     fn test_get_visible_trees() {
         let input = get_test_matrix();
         let expected = 21;
-        // let actual_refs: Vec<&[TreeHeight]> = input.iter().map(Vec::as_slice).collect();
-        let actual = get_visible_trees(input);
+        let actual = get_visible_trees(&input);
         assert_eq!(expected, actual);
     }
 }
