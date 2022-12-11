@@ -16,8 +16,7 @@ enum Motion {
 #[derive(Debug, PartialEq)]
 struct State {
     visited: HashSet<Position>,
-    head: Position,
-    tail: Position,
+    rope: Vec<Position>,
 }
 
 fn load_input() -> String {
@@ -47,11 +46,10 @@ fn parse_motions(input: &str) -> Vec<Motion> {
         .collect()
 }
 
-fn get_initial_state() -> State {
+fn get_initial_state(rope_length: usize) -> State {
     State {
         visited: HashSet::new(),
-        head: (0, 0),
-        tail: (0, 0),
+        rope: vec![(0, 0); rope_length],
     }
 }
 
@@ -82,12 +80,21 @@ fn move_head<'a>(
     distance: &Distance,
     movement: &dyn Fn(Position) -> Position,
 ) -> &'a mut State {
-    state.visited.insert(state.tail.clone());
+    state.visited.insert((0, 0));
 
     for _ in 0..*distance {
-        state.head = movement(state.head);
-        state.tail = move_tail(state.tail, state.head);
-        state.visited.insert(state.tail.clone());
+        state.rope[0] = movement(state.rope[0]);
+        let mut previous = state.rope[0];
+
+        for i in 1..state.rope.len() {
+            state.rope[i] = move_tail(state.rope[i], previous);
+
+            if i == state.rope.len() - 1 {
+                state.visited.insert(state.rope[i].clone());
+            }
+
+            previous = state.rope[i];
+        }
     }
 
     state
@@ -105,10 +112,15 @@ fn run_motion<'a>(state: &'a mut State, motion: &Motion) -> &'a mut State {
 fn main() {
     let input = load_input();
     let motions = parse_motions(&input);
-    let mut initial_state = get_initial_state();
+    let mut initial_state = get_initial_state(2);
     let final_state = motions.iter().fold(&mut initial_state, run_motion);
     let number_tail_visited = final_state.visited.len();
     println!("{}", number_tail_visited);
+
+    let mut initial_state_2 = get_initial_state(10);
+    let final_state_2 = motions.iter().fold(&mut initial_state_2, run_motion);
+    let number_tail_visited_2 = final_state_2.visited.len();
+    println!("{}", number_tail_visited_2);
 }
 
 #[cfg(test)]
@@ -138,28 +150,24 @@ mod tests {
     fn test_direct_motions() {
         let mut input_state_right = State {
             visited: HashSet::new(),
-            head: (1, 0),
-            tail: (0, 0),
+            rope: vec![(1, 0), (0, 0)],
         };
         let input_motion_right = Motion::Right(1);
         let expected_state_right = State {
             visited: HashSet::from([(0, 0), (1, 0)]),
-            head: (2, 0),
-            tail: (1, 0),
+            rope: vec![(2, 0), (1, 0)],
         };
         let actual_state_right = run_motion(&mut input_state_right, &input_motion_right);
         assert_eq!(&expected_state_right, actual_state_right);
 
         let mut input_state_left = State {
             visited: HashSet::new(),
-            head: (0, -1),
-            tail: (0, 0),
+            rope: vec![(0, -1), (0, 0)],
         };
         let input_motion_left = Motion::Down(1);
         let expected_state_left = State {
             visited: HashSet::from([(0, 0), (0, -1)]),
-            head: (0, -2),
-            tail: (0, -1),
+            rope: vec![(0, -2), (0, -1)],
         };
 
         let actual_state_left = run_motion(&mut input_state_left, &input_motion_left);
@@ -170,14 +178,12 @@ mod tests {
     fn test_diagonal_motions() {
         let mut input_state_diag_up = State {
             visited: HashSet::new(),
-            head: (1, 1),
-            tail: (0, 0),
+            rope: vec![(1, 1), (0, 0)],
         };
         let input_motion_diag_up = Motion::Up(1);
         let expected_state_diag_up = State {
             visited: HashSet::from([(0, 0), (1, 1)]),
-            head: (1, 2),
-            tail: (1, 1),
+            rope: vec![(1, 2), (1, 1)],
         };
 
         let actual_state_diag_up = run_motion(&mut input_state_diag_up, &input_motion_diag_up);
@@ -185,14 +191,12 @@ mod tests {
 
         let mut input_state_diag_right = State {
             visited: HashSet::new(),
-            head: (1, 1),
-            tail: (0, 0),
+            rope: vec![(1, 1), (0, 0)],
         };
         let input_motion_diag_right = Motion::Right(1);
         let expected_state_diag_right = State {
             visited: HashSet::from([(0, 0), (1, 1)]),
-            head: (2, 1),
-            tail: (1, 1),
+            rope: vec![(2, 1), (1, 1)],
         };
         let actual_state_diag_right =
             run_motion(&mut input_state_diag_right, &input_motion_diag_right);
