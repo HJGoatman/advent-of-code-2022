@@ -1,8 +1,8 @@
 use std::fs;
 
-use nalgebra::{max, DMatrix, DVector, RowDVector};
+use nalgebra::{max, DMatrix, DMatrixSlice, DVector, RowDVector};
 
-type TreeHeight = i16;
+type TreeHeight = i32;
 
 fn load_input() -> String {
     fs::read_to_string("input.txt").expect("Should have been able to read the file")
@@ -111,18 +111,64 @@ fn get_visible_trees(grid: &DMatrix<TreeHeight>) -> TreeHeight {
     combined.sum()
 }
 
+fn count_visible_trees(
+    value: &TreeHeight,
+    slice: DMatrixSlice<TreeHeight>,
+    reverse: bool,
+) -> TreeHeight {
+    let mut num_visible_trees = 0;
+
+    let iter: Box<dyn Iterator<Item = &TreeHeight>> = if !reverse {
+        Box::new(slice.iter())
+    } else {
+        Box::new(slice.iter().rev())
+    };
+
+    for a in iter {
+        num_visible_trees = num_visible_trees + 1;
+
+        if a >= value {
+            break;
+        }
+    }
+
+    num_visible_trees
+}
+
+fn get_scenic_score(grid: &DMatrix<TreeHeight>, i: usize, j: usize, v: TreeHeight) -> TreeHeight {
+    let trees_up = grid.slice((0, j), (i, 1));
+    let trees_left = grid.slice((i, 0), (1, j));
+    let trees_right = grid.slice((i, j + 1), (1, grid.ncols() - j - 1));
+    let trees_down = grid.slice((i + 1, j), (grid.nrows() - i - 1, 1));
+
+    let visible_trees_up = count_visible_trees(&v, trees_up, true);
+    let visible_trees_left = count_visible_trees(&v, trees_left, true);
+    let visible_trees_right = count_visible_trees(&v, trees_right, false);
+    let visible_trees_down = count_visible_trees(&v, trees_down, false);
+
+    visible_trees_up * visible_trees_left * visible_trees_right * visible_trees_down
+}
+
+fn get_scenic_scores(grid: &DMatrix<TreeHeight>) -> DMatrix<TreeHeight> {
+    grid.map_with_location(|i, j, v| get_scenic_score(grid, i, j, v))
+}
+
 fn main() {
     let input = load_input();
     let grid = parse_input(&input);
     let visible_count = get_visible_trees(&grid);
     println!("{}", visible_count);
+
+    let scenic_scores = get_scenic_scores(&grid);
+    let max_scenic_score = scenic_scores.max();
+    println!("{}", max_scenic_score);
 }
 
 #[cfg(test)]
 mod tests {
     use nalgebra::{dmatrix, DMatrix};
 
-    use crate::{get_visible_trees, is_visible, parse_input, TreeHeight};
+    use crate::{get_scenic_score, get_visible_trees, is_visible, parse_input, TreeHeight};
 
     fn get_test_matrix() -> DMatrix<TreeHeight> {
         dmatrix![
@@ -188,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_vvisible_bottom() {
+    fn test_is_visible_bottom() {
         let input = get_test_matrix();
 
         let expected_bottom = dmatrix![
@@ -208,5 +254,17 @@ mod tests {
         let expected = 21;
         let actual = get_visible_trees(&input);
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_get_scenic_score() {
+        let input = get_test_matrix();
+        let expected = 4;
+        let actual = get_scenic_score(&input, 1, 2, 5);
+        assert_eq!(expected, actual);
+
+        let expected_2 = 8;
+        let actual_2 = get_scenic_score(&input, 3, 2, 5);
+        assert_eq!(expected_2, actual_2);
     }
 }
