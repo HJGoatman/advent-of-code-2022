@@ -125,7 +125,7 @@ mod tests {
         env_logger::init();
         let input = include_str!("../test.txt");
         let input_program = parse_program(&input);
-        let signal_strengths = run_program(&input_program);
+        let (signal_strengths, _) = run_program(&input_program);
         let expected_signal_strengths = vec![420, 1140, 1800, 2940, 2880, 3960];
         assert_eq!(expected_signal_strengths, signal_strengths);
     }
