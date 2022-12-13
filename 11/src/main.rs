@@ -1,4 +1,3 @@
-use env_logger;
 use std::{
     collections::{HashMap, VecDeque},
     env, fs,
@@ -57,7 +56,7 @@ fn parse_a(input: &str) -> A {
 
 fn parse_operation(input: &str) -> Operation {
     let operation_str = &input.trim()[17..];
-    let mut operation_split = operation_str.split(" ");
+    let mut operation_split = operation_str.split(' ');
 
     let (lhs_str, op_str, rhs_str) = (
         operation_split.next().unwrap(),
@@ -85,7 +84,7 @@ fn parse_to_monkey_id(input: &str) -> MonkeyID {
 }
 
 fn parse_monkey(input: &str) -> Monkey {
-    let split: Vec<String> = input.split("\n").map(String::from).collect();
+    let split: Vec<String> = input.split('\n').map(String::from).collect();
 
     let id = parse_monkey_id(&split[0]);
     let items = parse_starting_items(&split[1]);
@@ -153,12 +152,12 @@ fn take_turn(
     while let Some(item) = monkey.items.pop_front() {
         let mut worry_level = run_operation(&monkey.operation, item);
 
-        monkey.inspections = monkey.inspections + 1;
+        monkey.inspections += 1;
 
         if is_part_1 {
-            worry_level = worry_level / 3;
+            worry_level /= 3;
         } else {
-            worry_level = worry_level % mod_value
+            worry_level %= mod_value
         }
 
         let target_monkey_id = if worry_level % monkey.test_value == 0 {
@@ -167,7 +166,7 @@ fn take_turn(
             &monkey.false_monkey_id
         };
 
-        deq.push_back((target_monkey_id.clone(), worry_level.clone()))
+        deq.push_back((*target_monkey_id, worry_level))
     }
 
     while let Some((id, worry)) = deq.pop_front() {
@@ -175,11 +174,11 @@ fn take_turn(
     }
 }
 
-fn run_round<'a>(
-    monkeys: &'a mut HashMap<MonkeyID, Monkey>,
+fn run_round(
+    monkeys: &mut HashMap<MonkeyID, Monkey>,
     is_part_1: bool,
     mod_value: u64,
-) -> &'a mut HashMap<MonkeyID, Monkey> {
+) -> &mut HashMap<MonkeyID, Monkey> {
     for i in 0..monkeys.len() {
         take_turn(i.try_into().unwrap(), monkeys, is_part_1, mod_value);
     }
@@ -196,7 +195,7 @@ fn run_rounds(monkeys: &mut HashMap<MonkeyID, Monkey>, num_rounds: u32, is_part_
         run_round(monkeys, is_part_1, lcm);
 
         if i == 1 || i == 20 || i % 1000 == 0 {
-            let inspections = get_inspections(&monkeys);
+            let inspections = get_inspections(monkeys);
             log::debug!("Round: {}, Inspections: {:?}", i, &inspections);
         }
     }
@@ -214,7 +213,7 @@ fn get_inspections(monkeys: &HashMap<MonkeyID, Monkey>) -> Vec<u64> {
 }
 
 fn get_monkey_business(input: &str, num_rounds: u32, is_part_1: bool) -> u64 {
-    let mut monkeys = parse_monkeys(&input);
+    let mut monkeys = parse_monkeys(input);
     run_rounds(&mut monkeys, num_rounds, is_part_1);
     let mut inspections: Vec<u64> = get_inspections(&monkeys);
     inspections.sort();
