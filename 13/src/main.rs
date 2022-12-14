@@ -2,10 +2,16 @@ use std::{cmp::Ordering, env, fs};
 
 type Integer = u16;
 
-#[derive(Debug, PartialEq, Eq, Clone, Ord)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 enum Packet {
     List(Vec<Packet>),
     Integer(Integer),
+}
+
+impl Ord for Packet {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap()
+    }
 }
 
 impl PartialOrd for Packet {
@@ -35,13 +41,7 @@ impl PartialOrd for Packet {
                 num_remaining_b
             );
 
-            let ordering = if num_remaining_a > num_remaining_b {
-                Ordering::Greater
-            } else if num_remaining_a < num_remaining_b {
-                Ordering::Less
-            } else {
-                Ordering::Equal
-            };
+            let ordering = num_remaining_a.cmp(&num_remaining_b);
 
             log::debug!("    - Left side is {:?}", ordering);
             Some(ordering)
@@ -112,7 +112,7 @@ fn parse_packet(input: &str) -> Packet {
         items.push(String::from(list_item_str));
     }
 
-    let inner_packets: Vec<Packet> = items.iter().map(|a| parse_packet(&a)).collect();
+    let inner_packets: Vec<Packet> = items.iter().map(|a| parse_packet(a)).collect();
     Packet::List(inner_packets)
 }
 
@@ -155,7 +155,7 @@ fn main() {
     println!("{}", num_correct_pairs);
 
     let divider_packets_str = "[[2]]\n[[6]]";
-    let divider_packets = parse_packets(&divider_packets_str);
+    let divider_packets = parse_packets(divider_packets_str);
 
     let mut all_packets = packet_pairs_to_packet_list(packet_pairs);
     let mut divider_packet_list = packet_pairs_to_packet_list(divider_packets.clone());
@@ -276,7 +276,7 @@ mod tests {
     fn test_parse_packets() {
         let input = include_str!("../test.txt");
         let expected = get_test_packet_pairs();
-        let actual = parse_packets(&input);
+        let actual = parse_packets(input);
         assert_eq!(expected, actual);
     }
 
