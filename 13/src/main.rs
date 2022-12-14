@@ -2,7 +2,7 @@ use std::{cmp::Ordering, env, fs};
 
 type Integer = u16;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Clone, Ord)]
 enum Packet {
     List(Vec<Packet>),
     Integer(Integer),
@@ -139,11 +139,43 @@ fn get_number_of_correct_pairs(packet_pairs: &[(Packet, Packet)]) -> u16 {
     number_of_correct_pairs
 }
 
+fn packet_pairs_to_packet_list(packet_pairs: Vec<(Packet, Packet)>) -> Vec<Packet> {
+    packet_pairs
+        .into_iter()
+        .flat_map(|(a, b)| vec![a, b])
+        .collect()
+}
+
 fn main() {
+    env_logger::init();
+
     let input = load_input();
     let packet_pairs = parse_packets(&input);
     let num_correct_pairs = get_number_of_correct_pairs(&packet_pairs);
     println!("{}", num_correct_pairs);
+
+    let divider_packets_str = "[[2]]\n[[6]]";
+    let divider_packets = parse_packets(&divider_packets_str);
+
+    let mut all_packets = packet_pairs_to_packet_list(packet_pairs);
+    let mut divider_packet_list = packet_pairs_to_packet_list(divider_packets.clone());
+
+    log::debug!("Divider Packets: {:?}", divider_packet_list);
+
+    all_packets.append(&mut divider_packet_list);
+    all_packets.sort();
+
+    log::debug!("{}", all_packets.len());
+
+    let mut product = 1;
+    for (i, packet) in all_packets.iter().enumerate() {
+        if packet == &divider_packets[0].0 || packet == &divider_packets[0].1 {
+            log::debug!("Found Divider {:?} at {}", packet, i);
+            product *= i + 1;
+        }
+    }
+
+    println!("{}", product);
 }
 
 #[cfg(test)]
