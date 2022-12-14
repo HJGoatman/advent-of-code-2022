@@ -6,7 +6,7 @@ use std::{
 
 use nalgebra::DMatrix;
 
-type Elevation = u8;
+type Elevation = i8;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash, PartialOrd, Ord)]
 struct Point {
@@ -149,16 +149,15 @@ fn get_all_points(cols: usize, rows: usize) -> HashMap<Point, u32> {
     points
 }
 
-fn find_shortest_path(height_map: &HeightMap) -> Option<u32> {
-    let mut dist: HashMap<Point, u32> =
-        get_all_points(height_map.map.ncols(), height_map.map.nrows());
+fn dijkstras(map: &DMatrix<Elevation>, start: Point, end: Option<Point>) -> HashMap<Point, u32> {
+    let mut dist: HashMap<Point, u32> = get_all_points(map.ncols(), map.nrows());
 
     let mut heap = BinaryHeap::new();
 
-    *dist.get_mut(&height_map.start).unwrap() = 0;
+    *dist.get_mut(&start).unwrap() = 0;
     heap.push(State {
         cost: 0,
-        position: height_map.start,
+        position: start,
     });
 
     log::debug!("Starting");
@@ -166,15 +165,15 @@ fn find_shortest_path(height_map: &HeightMap) -> Option<u32> {
     while let Some(State { cost, position }) = heap.pop() {
         log::debug!("Position {:?}, Cost: {}", position, cost);
 
-        if position == height_map.end {
-            return Some(cost);
+        if end.is_some() && position == end.unwrap() {
+            return dist;
         }
 
         if cost > dist[&position] {
             continue;
         }
 
-        for edge in get_next_steps(&height_map.map, &position) {
+        for edge in get_next_steps(&map, &position) {
             log::debug!("Edge: {:?}", edge);
             let next = State {
                 cost: cost + 1,
@@ -189,7 +188,37 @@ fn find_shortest_path(height_map: &HeightMap) -> Option<u32> {
         }
     }
 
-    None
+    dist
+}
+
+fn find_shortest_path(height_map: &HeightMap) -> Option<u32> {
+    let dist: HashMap<Point, u32> =
+        dijkstras(&height_map.map, height_map.start, Some(height_map.end));
+    let cost = dist.get(&height_map.end)?;
+    Some(*cost)
+}
+
+fn get_start_points(map: &DMatrix<Elevation>) -> Vec<Point> {
+    let mut points = Vec::new();
+
+    for (x, column) in map.column_iter().enumerate() {
+        for (y, val) in column.iter().enumerate() {
+            if *val == 1 {
+                points.push(Point { x, y });
+            }
+        }
+    }
+
+    points
+}
+
+fn find_single_destination_shortest_path(height_map: &HeightMap) -> Option<u32> {
+    let start_points = get_start_points(&height_map.map);
+    let destinations = dijkstras(&height_map.map.map(|a| a * -1), height_map.end, None);
+    let distances = start_points
+        .iter()
+        .map(|point| *destinations.get(point).unwrap() + 1);
+    distances.min()
 }
 
 fn main() {
@@ -198,16 +227,21 @@ fn main() {
     let input = load_input();
     let height_map = parse_height_map(&input);
     let steps = find_shortest_path(&height_map).unwrap();
-    // let steps = path.len();
 
     println!("{}", steps);
+
+    let single_dest_steps = find_single_destination_shortest_path(&height_map).unwrap();
+    println!("{}", single_dest_steps);
 }
 
 #[cfg(test)]
 mod tests {
     use nalgebra::DMatrix;
 
-    use crate::{find_shortest_path, parse_height_map, HeightMap, Point};
+    use crate::{
+        find_shortest_path, find_single_destination_shortest_path, parse_height_map, HeightMap,
+        Point,
+    };
 
     fn get_test_height_map() -> HeightMap {
         HeightMap {
@@ -232,49 +266,20 @@ mod tests {
         assert_eq!(expected, actual);
     }
 
-    fn get_test_path() -> Vec<Point> {
-        vec![
-            Point { x: 0, y: 4 },
-            Point { x: 0, y: 3 },
-            Point { x: 1, y: 3 },
-            Point { x: 1, y: 2 },
-            Point { x: 2, y: 2 },
-            Point { x: 2, y: 1 },
-            Point { x: 2, y: 0 },
-            Point { x: 3, y: 0 },
-            Point { x: 4, y: 0 },
-            Point { x: 5, y: 0 },
-            Point { x: 6, y: 0 },
-            Point { x: 7, y: 0 },
-            Point { x: 7, y: 1 },
-            Point { x: 7, y: 2 },
-            Point { x: 7, y: 3 },
-            Point { x: 7, y: 4 },
-            Point { x: 6, y: 4 },
-            Point { x: 5, y: 4 },
-            Point { x: 4, y: 4 },
-            Point { x: 3, y: 4 },
-            Point { x: 3, y: 3 },
-            Point { x: 3, y: 2 },
-            Point { x: 3, y: 1 },
-            Point { x: 4, y: 1 },
-            Point { x: 5, y: 1 },
-            Point { x: 6, y: 1 },
-            Point { x: 6, y: 2 },
-            Point { x: 6, y: 3 },
-            Point { x: 5, y: 3 },
-            Point { x: 4, y: 3 },
-            Point { x: 4, y: 2 },
-            Point { x: 5, y: 2 },
-        ]
-    }
-
     #[test]
     fn test_find_shortest_path() {
         env_logger::init();
         let input = get_test_height_map();
-        let expected = get_test_path();
+        let expected = 31;
         let actual = find_shortest_path(&input).unwrap();
-        assert_eq!(expected.len() as u32, actual);
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_find_single_destination_shortest_path() {
+        let input = get_test_height_map();
+        let expected = 29;
+        let actual = find_single_destination_shortest_path(&input).unwrap();
+        assert_eq!(expected, actual);
     }
 }
