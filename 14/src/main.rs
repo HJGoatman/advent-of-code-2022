@@ -72,26 +72,34 @@ fn parse_cave(input: &str) -> Cave {
     cave
 }
 
-fn start_sand_fall(cave: &mut Cave, start: Point) -> &mut Cave {
-    let cave_x_min = cave.iter().map(|(k, _)| k.x).min().unwrap();
-    let cave_x_max = cave.iter().map(|(k, _)| k.x).max().unwrap();
+fn start_sand_fall(cave: &mut Cave, start: Point, is_part_2: bool) -> &mut Cave {
     let cave_y_max = cave.iter().map(|(k, _)| k.y).max().unwrap();
 
     loop {
+        if is_part_2 && cave.contains_key(&start) {
+            return cave;
+        }
+
         let mut falling_grain = start.clone();
 
         loop {
+            if !is_part_2 && (falling_grain.y > cave_y_max) {
+                return cave;
+            }
+
+            if is_part_2
+                && (falling_grain.y >= (cave_y_max + 1))
+                && !cave.contains_key(&falling_grain)
+            {
+                log::debug!("Part 2: Hit floor adding {:?} to cave.", falling_grain);
+                cave.insert(falling_grain, Tile::Sand);
+                break;
+            }
+
             let mut potential_grain = Point {
                 x: falling_grain.x,
                 y: falling_grain.y + 1,
             };
-
-            if (potential_grain.x < cave_x_min)
-                || (potential_grain.x > cave_x_max)
-                || (potential_grain.y > cave_y_max)
-            {
-                return cave;
-            }
 
             if !cave.contains_key(&potential_grain) {
                 // Keep falling
@@ -117,6 +125,7 @@ fn start_sand_fall(cave: &mut Cave, start: Point) -> &mut Cave {
                 continue;
             }
 
+            log::debug!("Grain {:?} at rest.", falling_grain);
             cave.insert(falling_grain, Tile::Sand);
             break;
         }
@@ -133,11 +142,17 @@ fn count_sand(cave: &Cave) -> usize {
 }
 
 fn main() {
+    env_logger::init();
     let input = load_input();
     let mut cave = parse_cave(&input);
-    start_sand_fall(&mut cave, Point { x: 500, y: 0 });
+    start_sand_fall(&mut cave, Point { x: 500, y: 0 }, false);
     let num_sand_at_rest = count_sand(&cave);
     println!("{}", num_sand_at_rest);
+
+    let mut cave_2 = parse_cave(&input);
+    start_sand_fall(&mut cave_2, Point { x: 500, y: 0 }, true);
+    let num_sand_at_rest_2 = count_sand(&cave_2);
+    println!("{}", num_sand_at_rest_2);
 }
 
 #[cfg(test)]
