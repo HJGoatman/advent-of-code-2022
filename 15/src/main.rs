@@ -1,6 +1,6 @@
-use std::{collections::HashSet, env, fs};
+use std::{cmp::Ordering, collections::HashSet, env, fs};
 
-type Coordinate = i32;
+type Coordinate = i64;
 
 #[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
 struct Point {
@@ -14,10 +14,38 @@ struct SensorReport {
     beacon_position: Point,
 }
 
-#[derive(Ord, PartialEq, PartialOrd, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum Range {
     Min(Coordinate),
     Max(Coordinate),
+}
+
+impl Ord for Range {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+impl PartialOrd for Range {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        let mut ordering = match (self, other) {
+            (Range::Min(a), Range::Min(b)) => a.partial_cmp(b),
+            (Range::Min(a), Range::Max(b)) => a.partial_cmp(b),
+            (Range::Max(a), Range::Min(b)) => a.partial_cmp(b),
+            (Range::Max(a), Range::Max(b)) => a.partial_cmp(b),
+        };
+
+        if ordering == Some(Ordering::Equal) {
+            ordering = match (self, other) {
+                (Range::Min(_), Range::Min(_)) => Some(Ordering::Equal),
+                (Range::Min(_), Range::Max(_)) => Some(Ordering::Less),
+                (Range::Max(_), Range::Min(_)) => Some(Ordering::Greater),
+                (Range::Max(_), Range::Max(_)) => Some(Ordering::Equal),
+            }
+        }
+
+        ordering
+    }
 }
 
 fn load_input() -> String {
@@ -64,6 +92,8 @@ fn manhatten_distance(a: &Point, b: &Point) -> Coordinate {
 fn get_non_overlapping_ranges(ranges: &mut Vec<Range>) -> Vec<(Coordinate, Coordinate)> {
     ranges.sort();
 
+    log::debug!("{:?}", ranges);
+
     let mut stack = Vec::new();
     let mut non_overlapping_ranges = Vec::new();
 
@@ -88,6 +118,26 @@ fn get_non_overlapping_ranges(ranges: &mut Vec<Range>) -> Vec<(Coordinate, Coord
 }
 
 fn get_num_no_beacons(reports: &[SensorReport], row: Coordinate) -> Coordinate {
+    let non_overlapping_ranges = build_non_overlapping_ranges(reports, row);
+
+    let within_sensor_sum: Coordinate = non_overlapping_ranges
+        .iter()
+        .map(|(min, max)| max - min)
+        .sum();
+
+    let beacons: HashSet<Point> = reports
+        .iter()
+        .map(|report| report.beacon_position)
+        .filter(|point| point.y == row)
+        .collect();
+
+    within_sensor_sum - beacons.len() as Coordinate
+}
+
+fn build_non_overlapping_ranges(
+    reports: &[SensorReport],
+    row: Coordinate,
+) -> Vec<(Coordinate, Coordinate)> {
     // For there not to be a beacon:
     // 1. There is not currently a beacon there from the report.
     // 2. The manhatten distance from x, y must be less than the manhatten distance from sensor to
@@ -118,22 +168,45 @@ fn get_num_no_beacons(reports: &[SensorReport], row: Coordinate) -> Coordinate {
         );
 
         ranges.push(Range::Min(x_min));
-        ranges.push(Range::Max(x_max));
+        ranges.push(Range::Max(x_max + 1));
     }
 
-    let non_overlapping_ranges = get_non_overlapping_ranges(&mut ranges);
-    let within_sensor_sum: Coordinate = non_overlapping_ranges
-        .iter()
-        .map(|(min, max)| max + 1 - min)
-        .sum();
+    get_non_overlapping_ranges(&mut ranges)
+}
 
-    let beacons: HashSet<Point> = reports
-        .iter()
-        .map(|report| report.beacon_position)
-        .filter(|point| point.y == row)
-        .collect();
+fn get_distress_beacon(reports: &[SensorReport], max_range: Coordinate) -> Point {
+    // |s_x - x| + |s_y - y| > |s_x - b_x| + |s_y - b_y|
+    // |s_x - x| + |s_y - y| > rhs
+    //
+    // (+ +) 1.  s_x - x + s_y - y > rhs
+    //                      -x - y > rhs - s_x - s_y
+    // (+ -) 2.  s_x - x - s_y + y > rhs
+    //                      -x + y > rhs - s_x + s_y
+    // (- +) 3. -s_x + x + s_y - y > rhs
+    //                       x - y > rhs + s_x - s_y
+    // (- -) 4. -s_x + x - s_y + y > rhs
+    //                       x + y > rhs + s_x + s_y
 
-    within_sensor_sum - beacons.len() as Coordinate
+    // let manhatten_distance = manhatten_distance(&report.sensor_position, &report.beacon_position);
+
+    // let p_p = |x, y| - x - y > manhatten_distance - report.sensor_position.x - report.sensor_position.y;
+    // let p_m = |x, y|
+
+    for y in 0..max_range {
+        let non_overlapping_ranges = build_non_overlapping_ranges(reports, y);
+        if non_overlapping_ranges.len() > 1 {
+            return Point {
+                x: non_overlapping_ranges[0].1,
+                y,
+            };
+        }
+    }
+
+    Point { x: 0, y: 0 }
+}
+
+fn get_tuning_signal(point: &Point) -> Coordinate {
+    point.x * 4000000 + point.y
 }
 
 fn main() {
@@ -142,11 +215,15 @@ fn main() {
     let sensors = parse_input(&input);
     let num_no_beacons = get_num_no_beacons(&sensors, 2000000);
     println!("{}", num_no_beacons);
+
+    let distress_beacon: Point = get_distress_beacon(&sensors, 4000000);
+    let tuning_signal = get_tuning_signal(&distress_beacon);
+    println!("{}", tuning_signal);
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{get_num_no_beacons, parse_input, Point, SensorReport};
+    use crate::{get_distress_beacon, get_num_no_beacons, parse_input, Point, SensorReport};
 
     fn get_test_report() -> Vec<SensorReport> {
         vec![
@@ -223,6 +300,14 @@ mod tests {
         let input = get_test_report();
         let expected = 26;
         let actual = get_num_no_beacons(&input, 10);
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_get_distress_beacon() {
+        let input = get_test_report();
+        let expected = Point { x: 14, y: 11 };
+        let actual = get_distress_beacon(&input, 20);
         assert_eq!(expected, actual);
     }
 }
