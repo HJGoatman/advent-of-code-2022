@@ -136,11 +136,12 @@ fn visit<'a>(
     answer
 }
 
-fn get_most_pressure_possible(
+fn get_all_states(
     flow_rates: &FlowRates,
     tunnels: &Tunnels,
     start: &Valve,
-) -> FlowRate {
+    time: u32,
+) -> HashMap<u16, FlowRate> {
     let positive_flow_rates: FlowRates = flow_rates
         .iter()
         .filter(|(k, v)| **v != 0 || k == &start)
@@ -182,13 +183,51 @@ fn get_most_pressure_possible(
         &bitmap,
         &positive_flow_rates,
         start,
-        30,
+        time,
         0,
         0,
         &mut answer,
     );
 
-    *answer.values().max().unwrap()
+    answer
+}
+
+fn get_most_pressure_possible(
+    flow_rates: &FlowRates,
+    tunnels: &Tunnels,
+    start: &Valve,
+    time: u32,
+) -> FlowRate {
+    let all_states = get_all_states(flow_rates, tunnels, start, time);
+    *all_states.values().max().unwrap()
+}
+
+fn get_most_pressure_possible_with_elephant(
+    flow_rates: &FlowRates,
+    tunnels: &Tunnels,
+    start: &Valve,
+    time: u32,
+) -> FlowRate {
+    let all_states = get_all_states(flow_rates, tunnels, start, time);
+
+    let keys: Vec<u16> = all_states.keys().cloned().collect();
+    let mut disjoint_pairs: Vec<(u16, u16)> = Vec::new();
+
+    for i in 0..(keys.len() - 1) {
+        for j in i + 1..keys.len() {
+            if (keys[i] & keys[j]) != 0 {
+                continue;
+            }
+
+            disjoint_pairs.push((keys[i], keys[j]));
+        }
+    }
+
+    disjoint_pairs
+        .iter()
+        .map(|(left, right)| all_states.get(left).unwrap() + all_states.get(right).unwrap())
+        .max()
+        .unwrap()
 }
 
 fn main() {
@@ -198,15 +237,26 @@ fn main() {
     log::debug!("Flow Rates: {:?}", flow_rates);
     log::debug!("Tunnels: {:?}", tunnels);
     let most_pressure_state =
-        get_most_pressure_possible(&flow_rates, &tunnels, &Valve(String::from("AA")));
+        get_most_pressure_possible(&flow_rates, &tunnels, &Valve(String::from("AA")), 30);
     println!("{}", most_pressure_state);
+
+    let most_pressure_with_elephant = get_most_pressure_possible_with_elephant(
+        &flow_rates,
+        &tunnels,
+        &Valve(String::from("AA")),
+        26,
+    );
+    println!("{}", most_pressure_with_elephant);
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
-    use crate::{get_most_pressure_possible, parse_input, FlowRates, Tunnels, Valve};
+    use crate::{
+        get_most_pressure_possible, get_most_pressure_possible_with_elephant, parse_input,
+        FlowRates, Tunnels, Valve,
+    };
 
     fn get_test_flow_rates() -> FlowRates {
         HashMap::from([
@@ -290,6 +340,21 @@ mod tests {
             &input_flow_rates,
             &input_tunnels,
             &Valve(String::from("AA")),
+            30,
+        );
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_get_most_pressure_with_elephant() {
+        let input_flow_rates = get_test_flow_rates();
+        let input_tunnels = get_test_tunnels();
+        let expected = 1707;
+        let actual = get_most_pressure_possible_with_elephant(
+            &input_flow_rates,
+            &input_tunnels,
+            &Valve(String::from("AA")),
+            26,
         );
         assert_eq!(expected, actual);
     }
