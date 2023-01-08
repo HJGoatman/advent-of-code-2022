@@ -278,12 +278,24 @@ fn get_quality_level_sum(blueprints: &[Blueprint], minutes: u8) -> Count {
         .sum()
 }
 
+fn get_geode_product(blueprints: &[Blueprint], minutes: u8) -> Count {
+    blueprints
+        .iter()
+        .map(|blueprint| maximise_geodes(blueprint, minutes))
+        .product()
+}
+
 fn main() {
     env_logger::init();
     let input = load_input();
     let blueprints = parse_blueprints(&input);
     let quality_level_sum = get_quality_level_sum(&blueprints, 24);
     println!("{}", quality_level_sum);
+
+    // Warning this takes 11 hours on input.
+    let first_3: Vec<Blueprint> = blueprints.iter().take(3).cloned().collect();
+    let geode_product = get_geode_product(&first_3, 32);
+    println!("{}", geode_product);
 }
 
 #[cfg(test)]
