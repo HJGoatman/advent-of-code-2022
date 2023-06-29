@@ -1,5 +1,5 @@
 use nalgebra::DMatrix;
-use std::{env, fs};
+use std::{env, fmt::Display, fs};
 
 type Ordinate = u32;
 type Distance = u32;
@@ -17,10 +17,11 @@ trait Rectangular {
     fn has_wall_at_point(&self, coordinate: Coordinate) -> bool;
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 struct MapPart {
     start: Coordinate,
-    map: DMatrix<u8>,
+    map: DMatrix<Token>,
+    connections: MapPartConnection,
 }
 
 impl Rectangular for MapPart {
@@ -38,16 +39,28 @@ impl Rectangular for MapPart {
 
     fn has_wall_at_point(&self, coordinate: Coordinate) -> bool {
         let start = self.start;
+
+        log::trace!("Start: {:?}", start);
+        log::trace!("Coordinate: {:?}", coordinate);
+
         let x = coordinate.x - start.x;
         let y = coordinate.y - start.y;
 
         log::trace!("Rect positions: ({}, {})", x, y);
 
-        self.map[(y as usize, x as usize)] == 1
+        self.map[(y as usize, x as usize)] == Token::SolidWall
     }
 }
 
-type BoardMap = Vec<MapPart>;
+#[derive(Debug, PartialEq, Clone)]
+struct MapPartConnection {
+    up: Option<usize>,
+    down: Option<usize>,
+    left: Option<usize>,
+    right: Option<usize>,
+}
+
+type Map = Vec<MapPart>;
 
 #[derive(Debug, PartialEq)]
 enum Turn {
@@ -57,32 +70,25 @@ enum Turn {
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 enum Facing {
-    Right = 0,
-    Down = 1,
-    Left = 2,
-    Up = 3,
+    Right,
+    Down,
+    Left,
+    Up,
 }
 
-impl TryFrom<Ordinate> for Facing {
-    type Error = ();
-
-    fn try_from(v: Ordinate) -> Result<Self, Self::Error> {
-        match v {
-            x if x == Facing::Right as Ordinate => Ok(Facing::Right),
-            x if x == Facing::Down as Ordinate => Ok(Facing::Down),
-            x if x == Facing::Left as Ordinate => Ok(Facing::Left),
-            x if x == Facing::Up as Ordinate => Ok(Facing::Up),
-            _ => Err(()),
-        }
-    }
+#[derive(Debug, PartialEq)]
+enum Step {
+    Turn(Turn),
+    Move(Distance),
 }
 
-type Path = Vec<(Turn, Distance)>;
+type Path = Vec<Step>;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 struct State {
     position: Coordinate,
     facing: Facing,
+    current_map_part: usize,
 }
 
 fn load_input() -> String {
@@ -90,227 +96,364 @@ fn load_input() -> String {
     fs::read_to_string(args.get(1).unwrap()).expect("Should have been able to read the file")
 }
 
-fn build_map_part(ncols: usize, matrix: Vec<u8>, x: Ordinate, y: Ordinate) -> MapPart {
-    log::debug!("Columns: {}, Items: {}", ncols, matrix.len());
-    let map = DMatrix::from_vec(ncols, matrix.len() / ncols, matrix).transpose();
+#[derive(Debug, PartialEq, Copy, Clone)]
+enum Token {
+    Blank,
+    OpenTile,
+    SolidWall,
+}
 
-    MapPart {
-        start: Coordinate { x, y },
-        map,
+impl Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Token::Blank => f.write_str(" "),
+            Token::OpenTile => f.write_str("."),
+            Token::SolidWall => f.write_str("#"),
+        }
     }
 }
 
-fn parse_map(input: &str) -> BoardMap {
+fn parse_map(input: &str) -> Map {
+    let mut tokenised: Vec<Vec<Token>> = input
+        .split('\n')
+        .map(|row| {
+            row.chars()
+                .map(|char| match char {
+                    ' ' => Token::Blank,
+                    '.' => Token::OpenTile,
+                    '#' => Token::SolidWall,
+                    _ => todo!(),
+                })
+                .collect()
+        })
+        .collect();
+
+    let ncols = &tokenised.iter().map(|row| row.len()).max().unwrap();
+    let nrows = &tokenised.len();
+
+    tokenised = tokenised
+        .into_iter()
+        .map(|mut row| {
+            let diff = ncols - row.len();
+            let padding = std::iter::repeat(Token::Blank).take(diff);
+            row.extend(padding);
+            row
+        })
+        .collect();
+
+    // All cube nets have a single square with at some point, this is our part length.
+    let part_length = tokenised
+        .iter()
+        .map(|row| {
+            row.into_iter()
+                .filter(|&&token| token != Token::Blank)
+                .count()
+        })
+        .min()
+        .unwrap();
+
+    let flat: Vec<Token> = tokenised.into_iter().flatten().collect();
+
+    let matrix = DMatrix::from_iterator(*ncols, *nrows, flat).transpose();
+
+    let matrix_shape = matrix.shape();
+
+    let mut part_coordinates = Vec::new();
     let mut parts = Vec::new();
+    let mut starts = Vec::new();
 
-    let mut current_line: Option<(Ordinate, Ordinate, usize)> = None;
-    let mut current_values = Vec::new();
+    for y in 0..matrix_shape.0 / part_length {
+        for x in 0..matrix_shape.1 / part_length {
+            log::debug!("{}, {}", x, y);
 
-    for (col, row_str) in input.split('\n').enumerate() {
-        let mut row_start = 0;
+            let start = (y * part_length, x * part_length);
+            let part = matrix.view(start, (part_length, part_length));
 
-        let mut row_values: Vec<u8> = row_str
-            .chars()
-            .skip_while(|&c| {
-                row_start += 1;
-                c == ' '
-            })
-            .map(|c| match c {
-                '.' => 0,
-                '#' => 1,
-                _ => unreachable!(),
-            })
-            .collect();
-
-        if let Some((line_start, line_number, line_length)) = current_line {
-            if row_start != line_start || row_values.len() != line_length {
-                // New Rectangle
-                let mut map_values = Vec::new();
-                map_values.append(&mut current_values);
-                let map_part = build_map_part(line_length, map_values, line_start, line_number);
-                parts.push(map_part);
+            if part.iter().all(|val| val == &Token::Blank) {
+                continue;
             }
-        }
 
-        if current_values.is_empty() {
-            current_line = Some((row_start, col as Ordinate + 1, row_values.len()));
+            part_coordinates.push((x, y));
+            parts.push(part);
+            starts.push(start);
+            // log::debug!("{}", part);
         }
-
-        current_values.append(&mut row_values);
     }
 
-    if let Some((line_start, line_number, line_length)) = current_line {
-        let map_part = build_map_part(line_length, current_values, line_start, line_number);
-        parts.push(map_part);
+    log::debug!("parts: {:?}", part_coordinates);
+
+    let mut i = 0;
+    let net = DMatrix::from_fn(
+        part_coordinates.iter().map(|a| a.0).max().unwrap() + 1,
+        part_coordinates.iter().map(|a| a.1).max().unwrap() + 1,
+        |r, c| {
+            if part_coordinates.contains(&(r, c)) {
+                let v = i;
+                i += 1;
+                Some(v)
+            } else {
+                None
+            }
+        },
+    )
+    .transpose();
+
+    log::debug!("net: {:?}", net);
+
+    let mut connections = Vec::new();
+    for (x, y) in part_coordinates {
+        let col: Vec<u8> = net.column(x).into_iter().cloned().flatten().collect();
+
+        let row: Vec<u8> = net.row(y).into_iter().cloned().flatten().collect();
+
+        log::debug!("Row: {:?}, Col: {:?}", row, col);
+
+        fn modulo(a: i8, b: i8) -> i8 {
+            ((a % b) + b) % b
+        }
+
+        let get_wrap_part = |ord, vec: &[u8]| vec[(modulo(ord, vec.len() as i8)) as usize] as usize;
+
+        let val = net[(y, x)].unwrap();
+        let col_index = col.iter().position(|&r| r == val).unwrap() as i8;
+        let row_index = row.iter().position(|&r| r == val).unwrap() as i8;
+
+        let up = get_wrap_part(col_index - 1, &col);
+        let down = get_wrap_part(col_index + 1, &col);
+        let right = get_wrap_part(row_index + 1, &row);
+        let left = get_wrap_part(row_index - 1, &row);
+
+        connections.push(MapPartConnection {
+            up: Some(up),
+            right: Some(right),
+            down: Some(down),
+            left: Some(left),
+        });
     }
 
-    parts
+    log::debug!("Connections: {:#?}", connections);
+
+    let map_parts = starts
+        .iter()
+        .zip(parts.iter())
+        .zip(connections.iter())
+        .map(|((start, part), connections)| MapPart {
+            start: Coordinate {
+                x: (start.1 + 1) as u32,
+                y: (start.0 + 1) as u32,
+            },
+            map: part.clone_owned(),
+            connections: connections.clone(),
+        })
+        .collect();
+
+    map_parts
 }
 
 fn parse_path(input: &str) -> Path {
     let mut path = Vec::new();
-    let mut current_direction = Turn::Clockwise;
-    let mut distance_str: Vec<char> = Vec::new();
-    for c in input.chars() {
-        if c != 'R' && c != 'L' {
-            distance_str.push(c);
-            continue;
+
+    let chars = input.chars();
+    let mut buffer: Vec<char> = Vec::new();
+
+    fn collect_buffer(buffer: &mut Vec<char>, path: &mut Vec<Step>) {
+        if !buffer.is_empty() {
+            let distance = buffer
+                .iter()
+                .collect::<String>()
+                .parse::<Distance>()
+                .unwrap();
+            buffer.clear();
+            path.push(Step::Move(distance));
         }
-
-        let distance = distance_str
-            .iter()
-            .collect::<String>()
-            .parse::<Ordinate>()
-            .unwrap();
-
-        path.push((current_direction, distance));
-        distance_str.clear();
-
-        current_direction = match c {
-            'L' => Turn::AntiClockwise,
-            'R' => Turn::Clockwise,
-            _ => unreachable!(),
-        };
     }
 
-    path.push((
-        current_direction,
-        distance_str
-            .iter()
-            .collect::<String>()
-            .parse::<Ordinate>()
-            .unwrap(),
-    ));
+    for char in chars {
+        match char {
+            'L' => {
+                collect_buffer(&mut buffer, &mut path);
+                path.push(Step::Turn(Turn::AntiClockwise));
+            }
+            'R' => {
+                collect_buffer(&mut buffer, &mut path);
+                path.push(Step::Turn(Turn::Clockwise));
+            }
+            digit => buffer.push(digit),
+        }
+    }
+
+    collect_buffer(&mut buffer, &mut path);
 
     path
 }
 
-fn parse_board_map(input: &str) -> (BoardMap, Path) {
+fn parse_board_map(input: &str) -> (Map, Path) {
     let mut split = input.split("\n\n");
     let map = parse_map(split.next().unwrap());
     let path = parse_path(split.next().unwrap());
     (map, path)
 }
 
-fn contains_point(rect: &impl Rectangular, point: Coordinate) -> bool {
-    let rect_start = rect.get_start();
-    point.x >= rect_start.x
-        && point.x < rect_start.x + rect.get_width()
-        && point.y >= rect_start.y
-        && point.y < rect_start.y + rect.get_height()
-}
+fn move_across_map(map: &[MapPart], state: State, distance: Distance) -> State {
+    log::debug!(
+        "At {:?}, going {:?}, {} places.",
+        state.position,
+        state.facing,
+        distance
+    );
 
-type MoveFunction = Box<dyn Fn(Ordinate, Ordinate) -> Ordinate>;
-
-fn move_in_rectangle(
-    rects: &[impl Rectangular],
-    start: Coordinate,
-    direction: Facing,
-    distance: Ordinate,
-) -> Coordinate {
-    log::debug!("At {:?}, going {:?} {} places.", start, direction, distance);
-    let (mut ordinate, set_ordinate): (Ordinate, Box<dyn Fn(Coordinate, Ordinate) -> Coordinate>) =
-        match direction {
-            Facing::Left | Facing::Right => (
-                start.x,
-                Box::new(|coordinate, val| Coordinate {
-                    x: val,
-                    y: coordinate.y,
-                }),
-            ),
-            _ => (
-                start.y,
-                Box::new(|coordinate, val| Coordinate {
-                    x: coordinate.x,
-                    y: val,
-                }),
-            ),
-        };
-
-    let (direction_func, reverse_func): (MoveFunction, MoveFunction) = match direction {
-        Facing::Left | Facing::Up => (Box::new(|a, b| a - b), Box::new(|a, b| a + b)),
-        _ => (Box::new(|a, b| a + b), Box::new(|a, b| a - b)),
-    };
+    let mut state = state;
 
     for _ in 0..distance {
-        let rect = rects
-            .iter()
-            .find(|rect| contains_point(*rect, start))
-            .unwrap();
+        let current_map_part = &map[state.current_map_part];
+        let facing = state.facing;
+        let position = state.position;
 
-        let edge: Ordinate = match direction {
-            Facing::Up => rect.get_start().y,
-            Facing::Down => rect.get_start().y + rect.get_height() - 1,
-            Facing::Left => rect.get_start().x,
-            Facing::Right => rect.get_start().x + rect.get_width() - 1,
-        };
+        let current_start = current_map_part.get_start();
 
-        let mut can_move_rectangles = false;
-        if ordinate > 0 {
-            let potential_ord = direction_func(ordinate, 1);
-
-            can_move_rectangles = rects
-                .iter()
-                .any(|rec| contains_point(rec, set_ordinate(start, potential_ord)));
-        }
-
-        let mut next_ordinate = ordinate;
-
-        if ordinate == edge && !can_move_rectangles {
-            // TODO: More Optimised Code that doesn't move one space at a time!
-            while rects
-                .iter()
-                .any(|rec| contains_point(rec, set_ordinate(start, reverse_func(next_ordinate, 1))))
-            {
-                next_ordinate = reverse_func(next_ordinate, 1);
-
-                if next_ordinate == 0 {
-                    break;
+        let potential_state = match facing {
+            Facing::Up => {
+                if position.y == current_start.y {
+                    let potential_map_part = current_map_part.connections.up.unwrap();
+                    let potential_new_board = &map[potential_map_part];
+                    let potential_new_y =
+                        potential_new_board.get_start().y + potential_new_board.get_height() - 1;
+                    State {
+                        current_map_part: potential_map_part,
+                        position: Coordinate {
+                            y: potential_new_y,
+                            ..position
+                        },
+                        ..state
+                    }
+                } else {
+                    State {
+                        position: Coordinate {
+                            y: position.y - 1,
+                            ..position
+                        },
+                        ..state
+                    }
                 }
             }
-        } else {
-            next_ordinate = direction_func(ordinate, 1);
-        }
+            Facing::Right => {
+                if position.x == current_start.x + current_map_part.get_width() - 1 {
+                    let potential_map_part = current_map_part.connections.right.unwrap();
+                    let potential_new_board = &map[potential_map_part];
+                    let potential_new_x = potential_new_board.get_start().x;
+                    State {
+                        current_map_part: potential_map_part,
+                        position: Coordinate {
+                            x: potential_new_x,
+                            ..position
+                        },
+                        ..state
+                    }
+                } else {
+                    State {
+                        position: Coordinate {
+                            x: position.x + 1,
+                            ..position
+                        },
+                        ..state
+                    }
+                }
+            }
+            Facing::Down => {
+                if position.y == current_start.y + current_map_part.get_height() - 1 {
+                    let potential_map_part = current_map_part.connections.down.unwrap();
+                    let potential_new_board = &map[potential_map_part];
+                    let potential_new_y = potential_new_board.get_start().y;
+                    State {
+                        current_map_part: potential_map_part,
+                        position: Coordinate {
+                            y: potential_new_y,
+                            ..position
+                        },
+                        ..state
+                    }
+                } else {
+                    State {
+                        position: Coordinate {
+                            y: position.y + 1,
+                            ..position
+                        },
+                        ..state
+                    }
+                }
+            }
+            Facing::Left => {
+                if position.x == current_start.x {
+                    let potential_map_part = current_map_part.connections.left.unwrap();
+                    let potential_new_board = &map[potential_map_part];
+                    let potential_new_x =
+                        potential_new_board.get_start().x + potential_new_board.get_width() - 1;
 
-        let next_coordinate = set_ordinate(start, next_ordinate);
-        let next_rect = rects
-            .iter()
-            .find(|&rec| contains_point(rec, next_coordinate))
-            .unwrap();
+                    State {
+                        current_map_part: potential_map_part,
+                        position: Coordinate {
+                            x: potential_new_x,
+                            ..position
+                        },
+                        ..state
+                    }
+                } else {
+                    State {
+                        position: Coordinate {
+                            x: position.x - 1,
+                            ..position
+                        },
+                        ..state
+                    }
+                }
+            }
+        };
 
-        if next_rect.has_wall_at_point(next_coordinate) {
-            log::debug!("Hit a wall :(");
+        let current_part = &map[potential_state.current_map_part];
+        if current_part.has_wall_at_point(potential_state.position) {
+            log::debug!("Has wall at point! {:?}", potential_state.position);
             break;
         }
 
-        ordinate = next_ordinate;
-        log::trace!("Ordinate: {}", ordinate);
+        state = potential_state;
     }
 
-    set_ordinate(start, ordinate)
+    state
 }
 
-fn take_step(board_map: &[MapPart], state: &State, (turn, distance): &(Turn, Distance)) -> State {
-    let facing = match turn {
-        Turn::Clockwise => (((state.facing as Ordinate) + 1) % 4).try_into().unwrap(),
-        Turn::AntiClockwise => {
-            if state.facing == Facing::Right {
-                Facing::Up
-            } else {
-                ((state.facing as Ordinate) - 1).try_into().unwrap()
-            }
-        }
-    };
-
-    let new_position = move_in_rectangle(board_map, state.position, facing, *distance);
-
-    State {
-        position: new_position,
-        facing,
+fn turn_clockwise(facing: Facing) -> Facing {
+    match facing {
+        Facing::Up => Facing::Right,
+        Facing::Right => Facing::Down,
+        Facing::Down => Facing::Left,
+        Facing::Left => Facing::Up,
     }
 }
 
-fn walk(board_map: &[MapPart], path: &[(Turn, Distance)]) -> State {
+fn turn_anticlockwise(facing: Facing) -> Facing {
+    match facing {
+        Facing::Up => Facing::Left,
+        Facing::Right => Facing::Up,
+        Facing::Down => Facing::Right,
+        Facing::Left => Facing::Down,
+    }
+}
+
+fn follow_step(board_map: &[MapPart], state: State, step: &Step) -> State {
+    match step {
+        Step::Move(distance) => move_across_map(board_map, state, *distance),
+        Step::Turn(Turn::Clockwise) => State {
+            facing: turn_clockwise(state.facing),
+            ..state
+        },
+        Step::Turn(Turn::AntiClockwise) => State {
+            facing: turn_anticlockwise(state.facing),
+            ..state
+        },
+    }
+}
+
+fn walk(board_map: &[MapPart], path: &[Step]) -> State {
     for map_part in board_map {
         log::debug!("{:?}", map_part.start);
         log::debug!("{}", map_part.map);
@@ -318,13 +461,14 @@ fn walk(board_map: &[MapPart], path: &[(Turn, Distance)]) -> State {
 
     let initial_state = State {
         position: board_map.get(0).unwrap().start,
-        facing: Facing::Up,
+        facing: Facing::Right,
+        current_map_part: 0,
     };
 
     let mut current_state = initial_state;
     for step in path.iter() {
         log::trace!("{:?}, {:?}", current_state, step);
-        current_state = take_step(board_map, &current_state, step);
+        current_state = follow_step(board_map, current_state, step);
     }
 
     current_state
@@ -349,52 +493,122 @@ mod tests {
 
     use crate::Turn::{AntiClockwise, Clockwise};
     use crate::{
-        determine_password, move_in_rectangle, parse_board_map, walk, BoardMap, Coordinate, Facing,
-        MapPart, Ordinate, Path, Rectangular, State,
+        determine_password, parse_board_map, walk, Coordinate, Facing, Map, MapPart,
+        MapPartConnection, Path, State, Step, Token,
     };
 
     fn init() {
         let _ = env_logger::builder().is_test(true).try_init();
     }
 
-    fn get_test_input() -> (BoardMap, Path) {
+    fn get_test_input() -> (Map, Path) {
         let map = vec![
             MapPart {
                 start: Coordinate { x: 9, y: 1 },
                 map: dmatrix![
-                    0, 0, 0, 1;
-                    0, 1, 0, 0;
-                    1, 0, 0, 0;
-                    0, 0, 0, 0;
+                    Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::SolidWall;
+                    Token::OpenTile, Token::SolidWall, Token::OpenTile, Token::OpenTile;
+                    Token::SolidWall, Token::OpenTile, Token::OpenTile, Token::OpenTile;
+                    Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
                 ],
+                connections: MapPartConnection {
+                    up: Some(4),
+                    right: Some(0),
+                    down: Some(3),
+                    left: Some(0),
+                },
             },
             MapPart {
                 start: Coordinate { x: 1, y: 5 },
                 map: dmatrix![
-                    0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1;
-                    0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0;
-                    0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0;
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0;
+                    Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::SolidWall;
+                    Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
+                    Token::OpenTile, Token::OpenTile, Token::SolidWall, Token::OpenTile;
+                    Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
                 ],
+                connections: MapPartConnection {
+                    up: Some(1),
+                    right: Some(2),
+                    down: Some(1),
+                    left: Some(3),
+                },
+            },
+            MapPart {
+                start: Coordinate { x: 5, y: 5 },
+                map: dmatrix![
+                    Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
+                    Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
+                    Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::SolidWall;
+                    Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
+                ],
+                connections: MapPartConnection {
+                    up: Some(2),
+                    right: Some(3),
+                    down: Some(2),
+                    left: Some(1),
+                },
+            },
+            MapPart {
+                start: Coordinate { x: 9, y: 5 },
+                map: dmatrix![
+                    Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::SolidWall;
+                    Token::SolidWall, Token::OpenTile, Token::OpenTile, Token::OpenTile;
+                    Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
+                    Token::OpenTile, Token::OpenTile, Token::SolidWall, Token::OpenTile;
+                ],
+                connections: MapPartConnection {
+                    up: Some(0),
+                    right: Some(1),
+                    down: Some(4),
+                    left: Some(2),
+                },
             },
             MapPart {
                 start: Coordinate { x: 9, y: 9 },
                 map: dmatrix![
-                    0, 0, 0, 1, 0, 0, 0, 0;
-                    0, 0, 0, 0, 0, 1, 0, 0;
-                    0, 1, 0, 0, 0, 0, 0, 0;
-                    0, 0, 0, 0, 0, 0, 1, 0;
+                    Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::SolidWall;
+                    Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
+                    Token::OpenTile, Token::SolidWall, Token::OpenTile, Token::OpenTile;
+                    Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
                 ],
+                connections: MapPartConnection {
+                    up: Some(3),
+                    right: Some(5),
+                    down: Some(0),
+                    left: Some(5),
+                },
+            },
+            MapPart {
+                start: Coordinate { x: 13, y: 9 },
+                map: dmatrix![
+                     Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
+                     Token::OpenTile, Token::SolidWall, Token::OpenTile, Token::OpenTile;
+                     Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
+                     Token::OpenTile, Token::OpenTile, Token::SolidWall, Token::OpenTile;
+                ],
+                connections: MapPartConnection {
+                    up: Some(5),
+                    down: Some(5),
+                    left: Some(4),
+                    right: Some(4),
+                },
             },
         ];
+
         let path = vec![
-            (Clockwise, 10),
-            (Clockwise, 5),
-            (AntiClockwise, 5),
-            (Clockwise, 10),
-            (AntiClockwise, 4),
-            (Clockwise, 5),
-            (AntiClockwise, 5),
+            Step::Move(10),
+            Step::Turn(Clockwise),
+            Step::Move(5),
+            Step::Turn(AntiClockwise),
+            Step::Move(5),
+            Step::Turn(Clockwise),
+            Step::Move(10),
+            Step::Turn(AntiClockwise),
+            Step::Move(4),
+            Step::Turn(Clockwise),
+            Step::Move(5),
+            Step::Turn(AntiClockwise),
+            Step::Move(5),
         ];
 
         (map, path)
@@ -405,7 +619,7 @@ mod tests {
         init();
         let input = include_str!("../test.txt");
         let (expected_map, expected_path) = get_test_input();
-        let (actual_map, actual_path) = parse_board_map(input);
+        let (actual_map, actual_path) = parse_board_map(input, 4);
         for (expected_part, actual_part) in expected_map.iter().zip(actual_map.iter()) {
             assert_eq!(expected_part.start, actual_part.start);
             assert_eq!(expected_part.map, actual_part.map);
@@ -420,6 +634,7 @@ mod tests {
         let expected = State {
             position: Coordinate { x: 8, y: 6 },
             facing: Facing::Right,
+            current_map_part: 2,
         };
         let actual = walk(&map, &path);
         assert_eq!(expected, actual);
@@ -430,99 +645,10 @@ mod tests {
         let input = State {
             position: Coordinate { x: 8, y: 6 },
             facing: Facing::Right,
+            current_map_part: 0,
         };
         let expected = 6032;
         let actual = determine_password(&input);
         assert_eq!(expected, actual);
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    struct TestRectangle {
-        start: Coordinate,
-        width: Ordinate,
-        height: Ordinate,
-    }
-
-    impl Rectangular for TestRectangle {
-        fn get_start(&self) -> Coordinate {
-            self.start
-        }
-
-        fn get_width(&self) -> crate::Ordinate {
-            self.width
-        }
-
-        fn get_height(&self) -> crate::Ordinate {
-            self.height
-        }
-
-        fn has_wall_at_point(&self, _: Coordinate) -> bool {
-            false
-        }
-    }
-
-    #[test]
-    fn test_wrap_around_rectangle() {
-        let test_rectangle = TestRectangle {
-            start: Coordinate { x: 0, y: 0 },
-            width: 4,
-            height: 6,
-        };
-
-        let actual_1 =
-            move_in_rectangle(&[test_rectangle], Coordinate { x: 1, y: 1 }, Facing::Up, 8);
-        let expected_1 = Coordinate { x: 1, y: 5 };
-        assert_eq!(expected_1, actual_1);
-
-        let actual_2 = move_in_rectangle(
-            &[test_rectangle],
-            Coordinate { x: 3, y: 3 },
-            Facing::Right,
-            1,
-        );
-        let expected_2 = Coordinate { x: 0, y: 3 };
-        assert_eq!(expected_2, actual_2);
-
-        let actual_3 = move_in_rectangle(
-            &[test_rectangle],
-            Coordinate { x: 2, y: 5 },
-            Facing::Down,
-            3,
-        );
-        let expected_3 = Coordinate { x: 2, y: 2 };
-        assert_eq!(expected_3, actual_3);
-
-        let actual_4 = move_in_rectangle(
-            &[test_rectangle],
-            Coordinate { x: 3, y: 5 },
-            Facing::Left,
-            4,
-        );
-        let expected_4 = Coordinate { x: 3, y: 5 };
-        assert_eq!(expected_4, actual_4);
-    }
-
-    #[test]
-    fn test_moving_between_rectangles() {
-        let rectangle_1 = TestRectangle {
-            start: Coordinate { x: 0, y: 0 },
-            width: 5,
-            height: 5,
-        };
-        let rectangle_2 = TestRectangle {
-            start: Coordinate { x: 2, y: 5 },
-            width: 5,
-            height: 5,
-        };
-
-        let rectangles = [rectangle_1, rectangle_2];
-
-        let actual_1 = move_in_rectangle(&rectangles, Coordinate { x: 3, y: 3 }, Facing::Down, 4);
-        let expected_1 = Coordinate { x: 3, y: 7 };
-        assert_eq!(expected_1, actual_1);
-
-        let actual_2 = move_in_rectangle(&rectangles, Coordinate { x: 3, y: 3 }, Facing::Up, 4);
-        let expected_2 = Coordinate { x: 3, y: 9 };
-        assert_eq!(expected_2, actual_2);
     }
 }

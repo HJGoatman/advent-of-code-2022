@@ -8,4 +8,6 @@ edition = "2021"
 [dependencies]
 env_logger = "0.10.0"
 log = "0.4.17"
-nalgebra = "0.31.4"
+nalgebra = "0.32.2"
+itertools = "0.10.5"
+typed-arena = "2.0.2"
