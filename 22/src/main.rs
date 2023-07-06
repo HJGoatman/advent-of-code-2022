@@ -21,7 +21,11 @@ trait Rectangular {
 struct MapPart {
     start: Coordinate,
     map: DMatrix<Token>,
-    connections: MapPartConnection,
+}
+
+struct Map {
+    parts: Vec<MapPart>,
+    connections: Vec<MapPartConnection>,
 }
 
 impl Rectangular for MapPart {
@@ -54,13 +58,11 @@ impl Rectangular for MapPart {
 
 #[derive(Debug, PartialEq, Clone)]
 struct MapPartConnection {
-    up: Option<usize>,
-    down: Option<usize>,
-    left: Option<usize>,
-    right: Option<usize>,
+    up: usize,
+    down: usize,
+    left: usize,
+    right: usize,
 }
-
-type Map = Vec<MapPart>;
 
 #[derive(Debug, PartialEq)]
 enum Turn {
@@ -88,7 +90,7 @@ type Path = Vec<Step>;
 struct State {
     position: Coordinate,
     facing: Facing,
-    current_map_part: usize,
+    current_map_part_id: usize,
 }
 
 fn load_input() -> String {
@@ -113,7 +115,7 @@ impl Display for Token {
     }
 }
 
-fn parse_map(input: &str) -> Map {
+fn parse_map(input: &str) -> Vec<MapPart> {
     let mut tokenised: Vec<Vec<Token>> = input
         .split('\n')
         .map(|row| {
@@ -156,9 +158,10 @@ fn parse_map(input: &str) -> Map {
 
     let matrix = DMatrix::from_iterator(*ncols, *nrows, flat).transpose();
 
+    log::debug!("{}", matrix);
+
     let matrix_shape = matrix.shape();
 
-    let mut part_coordinates = Vec::new();
     let mut parts = Vec::new();
     let mut starts = Vec::new();
 
@@ -173,77 +176,21 @@ fn parse_map(input: &str) -> Map {
                 continue;
             }
 
-            part_coordinates.push((x, y));
             parts.push(part);
             starts.push(start);
             // log::debug!("{}", part);
         }
     }
 
-    log::debug!("parts: {:?}", part_coordinates);
-
-    let mut i = 0;
-    let net = DMatrix::from_fn(
-        part_coordinates.iter().map(|a| a.0).max().unwrap() + 1,
-        part_coordinates.iter().map(|a| a.1).max().unwrap() + 1,
-        |r, c| {
-            if part_coordinates.contains(&(r, c)) {
-                let v = i;
-                i += 1;
-                Some(v)
-            } else {
-                None
-            }
-        },
-    )
-    .transpose();
-
-    log::debug!("net: {:?}", net);
-
-    let mut connections = Vec::new();
-    for (x, y) in part_coordinates {
-        let col: Vec<u8> = net.column(x).into_iter().cloned().flatten().collect();
-
-        let row: Vec<u8> = net.row(y).into_iter().cloned().flatten().collect();
-
-        log::debug!("Row: {:?}, Col: {:?}", row, col);
-
-        fn modulo(a: i8, b: i8) -> i8 {
-            ((a % b) + b) % b
-        }
-
-        let get_wrap_part = |ord, vec: &[u8]| vec[(modulo(ord, vec.len() as i8)) as usize] as usize;
-
-        let val = net[(y, x)].unwrap();
-        let col_index = col.iter().position(|&r| r == val).unwrap() as i8;
-        let row_index = row.iter().position(|&r| r == val).unwrap() as i8;
-
-        let up = get_wrap_part(col_index - 1, &col);
-        let down = get_wrap_part(col_index + 1, &col);
-        let right = get_wrap_part(row_index + 1, &row);
-        let left = get_wrap_part(row_index - 1, &row);
-
-        connections.push(MapPartConnection {
-            up: Some(up),
-            right: Some(right),
-            down: Some(down),
-            left: Some(left),
-        });
-    }
-
-    log::debug!("Connections: {:#?}", connections);
-
     let map_parts = starts
         .iter()
         .zip(parts.iter())
-        .zip(connections.iter())
-        .map(|((start, part), connections)| MapPart {
+        .map(|(start, part)| MapPart {
             start: Coordinate {
                 x: (start.1 + 1) as u32,
                 y: (start.0 + 1) as u32,
             },
             map: part.clone_owned(),
-            connections: connections.clone(),
         })
         .collect();
 
@@ -287,14 +234,102 @@ fn parse_path(input: &str) -> Path {
     path
 }
 
-fn parse_board_map(input: &str) -> (Map, Path) {
+fn parse_board_map(input: &str) -> (Vec<MapPart>, Path) {
     let mut split = input.split("\n\n");
-    let map = parse_map(split.next().unwrap());
+    let map_parts = parse_map(split.next().unwrap());
     let path = parse_path(split.next().unwrap());
-    (map, path)
+    (map_parts, path)
 }
 
-fn move_across_map(map: &[MapPart], state: State, distance: Distance) -> State {
+fn create_flat_map(parts: &[MapPart]) -> Map {
+    let starts: Vec<Coordinate> = parts
+        .iter()
+        .map(|part| {
+            let start = part.get_start();
+
+            Coordinate {
+                x: (start.x - 1) / part.get_width(),
+                y: (start.y - 1) / part.get_height(),
+            }
+        })
+        .collect();
+    log::debug!("Starts: {:#?}", starts);
+
+    let mut i = 0;
+    let net = DMatrix::from_fn(
+        (starts.iter().map(|a| a.x).max().unwrap() + 1)
+            .try_into()
+            .unwrap(),
+        (starts.iter().map(|a| a.y).max().unwrap() + 1)
+            .try_into()
+            .unwrap(),
+        |r, c| {
+            if starts.contains(&Coordinate {
+                x: r as Ordinate,
+                y: c as Ordinate,
+            }) {
+                let v = i;
+                i += 1;
+                Some(v)
+            } else {
+                None
+            }
+        },
+    )
+    .transpose();
+
+    log::debug!(
+        "net: {}",
+        net.map(|v| match v {
+            Some(a) => a.to_string(),
+            None => " ".to_string(),
+        })
+    );
+
+    let mut connections = Vec::new();
+    for Coordinate { x, y } in starts {
+        let col: Vec<u8> = net
+            .column(x as usize)
+            .into_iter()
+            .cloned()
+            .flatten()
+            .collect();
+        let row: Vec<u8> = net.row(y as usize).into_iter().cloned().flatten().collect();
+
+        log::debug!("Row: {:?}, Col: {:?}", row, col);
+
+        fn modulo(a: i8, b: i8) -> i8 {
+            ((a % b) + b) % b
+        }
+
+        let get_wrap_part = |ord, vec: &[u8]| vec[(modulo(ord, vec.len() as i8)) as usize] as usize;
+
+        let val = net[(y as usize, x as usize)].unwrap();
+        let col_index = col.iter().position(|&r| r == val).unwrap() as i8;
+        let row_index = row.iter().position(|&r| r == val).unwrap() as i8;
+
+        let up = get_wrap_part(col_index - 1, &col);
+        let down = get_wrap_part(col_index + 1, &col);
+        let right = get_wrap_part(row_index + 1, &row);
+        let left = get_wrap_part(row_index - 1, &row);
+
+        connections.push(MapPartConnection {
+            up,
+            right,
+            down,
+            left,
+        });
+    }
+    //
+    log::debug!("Connections: {:#?}", connections);
+
+    Map {
+        parts: parts.to_vec(),
+        connections,
+    }
+}
+
+fn move_across_map(map: &Map, state: State, distance: Distance) -> State {
     log::debug!(
         "At {:?}, going {:?}, {} places.",
         state.position,
@@ -305,7 +340,7 @@ fn move_across_map(map: &[MapPart], state: State, distance: Distance) -> State {
     let mut state = state;
 
     for _ in 0..distance {
-        let current_map_part = &map[state.current_map_part];
+        let current_map_part = &map.parts[state.current_map_part_id];
         let facing = state.facing;
         let position = state.position;
 
@@ -314,12 +349,12 @@ fn move_across_map(map: &[MapPart], state: State, distance: Distance) -> State {
         let potential_state = match facing {
             Facing::Up => {
                 if position.y == current_start.y {
-                    let potential_map_part = current_map_part.connections.up.unwrap();
-                    let potential_new_board = &map[potential_map_part];
+                    let potential_map_part_id = map.connections[state.current_map_part_id].up;
+                    let potential_new_board = &map.parts[potential_map_part_id];
                     let potential_new_y =
                         potential_new_board.get_start().y + potential_new_board.get_height() - 1;
                     State {
-                        current_map_part: potential_map_part,
+                        current_map_part_id: potential_map_part_id,
                         position: Coordinate {
                             y: potential_new_y,
                             ..position
@@ -338,11 +373,11 @@ fn move_across_map(map: &[MapPart], state: State, distance: Distance) -> State {
             }
             Facing::Right => {
                 if position.x == current_start.x + current_map_part.get_width() - 1 {
-                    let potential_map_part = current_map_part.connections.right.unwrap();
-                    let potential_new_board = &map[potential_map_part];
+                    let potential_map_part_id = map.connections[state.current_map_part_id].right;
+                    let potential_new_board = &map.parts[potential_map_part_id];
                     let potential_new_x = potential_new_board.get_start().x;
                     State {
-                        current_map_part: potential_map_part,
+                        current_map_part_id: potential_map_part_id,
                         position: Coordinate {
                             x: potential_new_x,
                             ..position
@@ -361,11 +396,11 @@ fn move_across_map(map: &[MapPart], state: State, distance: Distance) -> State {
             }
             Facing::Down => {
                 if position.y == current_start.y + current_map_part.get_height() - 1 {
-                    let potential_map_part = current_map_part.connections.down.unwrap();
-                    let potential_new_board = &map[potential_map_part];
+                    let potential_map_part_id = map.connections[state.current_map_part_id].down;
+                    let potential_new_board = &map.parts[potential_map_part_id];
                     let potential_new_y = potential_new_board.get_start().y;
                     State {
-                        current_map_part: potential_map_part,
+                        current_map_part_id: potential_map_part_id,
                         position: Coordinate {
                             y: potential_new_y,
                             ..position
@@ -384,13 +419,13 @@ fn move_across_map(map: &[MapPart], state: State, distance: Distance) -> State {
             }
             Facing::Left => {
                 if position.x == current_start.x {
-                    let potential_map_part = current_map_part.connections.left.unwrap();
-                    let potential_new_board = &map[potential_map_part];
+                    let potential_map_part_id = map.connections[state.current_map_part_id].left;
+                    let potential_new_board = &map.parts[potential_map_part_id];
                     let potential_new_x =
                         potential_new_board.get_start().x + potential_new_board.get_width() - 1;
 
                     State {
-                        current_map_part: potential_map_part,
+                        current_map_part_id: potential_map_part_id,
                         position: Coordinate {
                             x: potential_new_x,
                             ..position
@@ -409,7 +444,7 @@ fn move_across_map(map: &[MapPart], state: State, distance: Distance) -> State {
             }
         };
 
-        let current_part = &map[potential_state.current_map_part];
+        let current_part = &map.parts[potential_state.current_map_part_id];
         if current_part.has_wall_at_point(potential_state.position) {
             log::debug!("Has wall at point! {:?}", potential_state.position);
             break;
@@ -439,7 +474,7 @@ fn turn_anticlockwise(facing: Facing) -> Facing {
     }
 }
 
-fn follow_step(board_map: &[MapPart], state: State, step: &Step) -> State {
+fn follow_step(board_map: &Map, state: State, step: &Step) -> State {
     match step {
         Step::Move(distance) => move_across_map(board_map, state, *distance),
         Step::Turn(Turn::Clockwise) => State {
@@ -453,16 +488,16 @@ fn follow_step(board_map: &[MapPart], state: State, step: &Step) -> State {
     }
 }
 
-fn walk(board_map: &[MapPart], path: &[Step]) -> State {
-    for map_part in board_map {
+fn walk(board_map: &Map, path: &[Step]) -> State {
+    for map_part in board_map.parts.iter() {
         log::debug!("{:?}", map_part.start);
         log::debug!("{}", map_part.map);
     }
 
     let initial_state = State {
-        position: board_map.get(0).unwrap().start,
+        position: board_map.parts.get(0).unwrap().start,
         facing: Facing::Right,
-        current_map_part: 0,
+        current_map_part_id: 0,
     };
 
     let mut current_state = initial_state;
@@ -481,8 +516,9 @@ fn determine_password(state: &State) -> Ordinate {
 fn main() {
     env_logger::init();
     let input = load_input();
-    let (board_map, path) = parse_board_map(&input);
-    let final_state = walk(&board_map, &path);
+    let (map_parts, path) = parse_board_map(&input);
+    let flat_map = create_flat_map(&map_parts);
+    let final_state = walk(&flat_map, &path);
     let final_password = determine_password(&final_state);
     println!("{}", final_password);
 }
@@ -634,7 +670,7 @@ mod tests {
         let expected = State {
             position: Coordinate { x: 8, y: 6 },
             facing: Facing::Right,
-            current_map_part: 2,
+            current_map_part_id: 2,
         };
         let actual = walk(&map, &path);
         assert_eq!(expected, actual);
@@ -645,7 +681,7 @@ mod tests {
         let input = State {
             position: Coordinate { x: 8, y: 6 },
             facing: Facing::Right,
-            current_map_part: 0,
+            current_map_part_id: 0,
         };
         let expected = 6032;
         let actual = determine_password(&input);
