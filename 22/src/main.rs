@@ -27,6 +27,66 @@ struct Map {
     parts: Vec<MapPart>,
     connections: Vec<MapPartConnection>,
 }
+impl Map {
+    fn move_up_part(&self, state: State) -> State {
+        let potential_map_part_id = self.connections[state.current_map_part_id].up;
+        let potential_new_board = &self.parts[potential_map_part_id];
+        let potential_new_y =
+            potential_new_board.get_start().y + potential_new_board.get_height() - 1;
+        State {
+            current_map_part_id: potential_map_part_id,
+            position: Coordinate {
+                y: potential_new_y,
+                ..state.position
+            },
+            ..state
+        }
+    }
+
+    fn move_right_part(&self, state: State) -> State {
+        let potential_map_part_id = self.connections[state.current_map_part_id].right;
+        let potential_new_board = &self.parts[potential_map_part_id];
+        let potential_new_x = potential_new_board.get_start().x;
+        State {
+            current_map_part_id: potential_map_part_id,
+            position: Coordinate {
+                x: potential_new_x,
+                ..state.position
+            },
+            ..state
+        }
+    }
+
+    fn move_down_part(&self, state: State) -> State {
+        let potential_map_part_id = self.connections[state.current_map_part_id].down;
+        let potential_new_board = &self.parts[potential_map_part_id];
+        let potential_new_y = potential_new_board.get_start().y;
+        State {
+            current_map_part_id: potential_map_part_id,
+            position: Coordinate {
+                y: potential_new_y,
+                ..state.position
+            },
+            ..state
+        }
+    }
+
+    fn move_left_part(&self, state: State) -> State {
+        let potential_map_part_id = self.connections[state.current_map_part_id].left;
+        let potential_new_board = &self.parts[potential_map_part_id];
+        let potential_new_x =
+            potential_new_board.get_start().x + potential_new_board.get_width() - 1;
+
+        State {
+            current_map_part_id: potential_map_part_id,
+            position: Coordinate {
+                x: potential_new_x,
+                ..state.position
+            },
+            ..state
+        }
+    }
+}
 
 impl Rectangular for MapPart {
     fn get_start(&self) -> Coordinate {
@@ -348,19 +408,9 @@ fn move_across_map(map: &Map, state: State, distance: Distance) -> State {
 
         let potential_state = match facing {
             Facing::Up => {
-                if position.y == current_start.y {
-                    let potential_map_part_id = map.connections[state.current_map_part_id].up;
-                    let potential_new_board = &map.parts[potential_map_part_id];
-                    let potential_new_y =
-                        potential_new_board.get_start().y + potential_new_board.get_height() - 1;
-                    State {
-                        current_map_part_id: potential_map_part_id,
-                        position: Coordinate {
-                            y: potential_new_y,
-                            ..position
-                        },
-                        ..state
-                    }
+                let is_at_top_edge = position.y == current_start.y;
+                if is_at_top_edge {
+                    map.move_up_part(state)
                 } else {
                     State {
                         position: Coordinate {
@@ -372,18 +422,10 @@ fn move_across_map(map: &Map, state: State, distance: Distance) -> State {
                 }
             }
             Facing::Right => {
-                if position.x == current_start.x + current_map_part.get_width() - 1 {
-                    let potential_map_part_id = map.connections[state.current_map_part_id].right;
-                    let potential_new_board = &map.parts[potential_map_part_id];
-                    let potential_new_x = potential_new_board.get_start().x;
-                    State {
-                        current_map_part_id: potential_map_part_id,
-                        position: Coordinate {
-                            x: potential_new_x,
-                            ..position
-                        },
-                        ..state
-                    }
+                let is_at_right_edge =
+                    position.x == current_start.x + current_map_part.get_width() - 1;
+                if is_at_right_edge {
+                    map.move_right_part(state)
                 } else {
                     State {
                         position: Coordinate {
@@ -395,18 +437,10 @@ fn move_across_map(map: &Map, state: State, distance: Distance) -> State {
                 }
             }
             Facing::Down => {
-                if position.y == current_start.y + current_map_part.get_height() - 1 {
-                    let potential_map_part_id = map.connections[state.current_map_part_id].down;
-                    let potential_new_board = &map.parts[potential_map_part_id];
-                    let potential_new_y = potential_new_board.get_start().y;
-                    State {
-                        current_map_part_id: potential_map_part_id,
-                        position: Coordinate {
-                            y: potential_new_y,
-                            ..position
-                        },
-                        ..state
-                    }
+                let is_at_bottom_edge =
+                    position.y == current_start.y + current_map_part.get_height() - 1;
+                if is_at_bottom_edge {
+                    map.move_down_part(state)
                 } else {
                     State {
                         position: Coordinate {
@@ -418,20 +452,9 @@ fn move_across_map(map: &Map, state: State, distance: Distance) -> State {
                 }
             }
             Facing::Left => {
-                if position.x == current_start.x {
-                    let potential_map_part_id = map.connections[state.current_map_part_id].left;
-                    let potential_new_board = &map.parts[potential_map_part_id];
-                    let potential_new_x =
-                        potential_new_board.get_start().x + potential_new_board.get_width() - 1;
-
-                    State {
-                        current_map_part_id: potential_map_part_id,
-                        position: Coordinate {
-                            x: potential_new_x,
-                            ..position
-                        },
-                        ..state
-                    }
+                let is_at_left_edge = position.x == current_start.x;
+                if is_at_left_edge {
+                    map.move_left_part(state)
                 } else {
                     State {
                         position: Coordinate {
@@ -538,7 +561,7 @@ mod tests {
     }
 
     fn get_test_input() -> (Map, Path) {
-        let map = vec![
+        let parts = vec![
             MapPart {
                 start: Coordinate { x: 9, y: 1 },
                 map: dmatrix![
@@ -547,12 +570,6 @@ mod tests {
                     Token::SolidWall, Token::OpenTile, Token::OpenTile, Token::OpenTile;
                     Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
                 ],
-                connections: MapPartConnection {
-                    up: Some(4),
-                    right: Some(0),
-                    down: Some(3),
-                    left: Some(0),
-                },
             },
             MapPart {
                 start: Coordinate { x: 1, y: 5 },
@@ -562,12 +579,6 @@ mod tests {
                     Token::OpenTile, Token::OpenTile, Token::SolidWall, Token::OpenTile;
                     Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
                 ],
-                connections: MapPartConnection {
-                    up: Some(1),
-                    right: Some(2),
-                    down: Some(1),
-                    left: Some(3),
-                },
             },
             MapPart {
                 start: Coordinate { x: 5, y: 5 },
@@ -577,12 +588,6 @@ mod tests {
                     Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::SolidWall;
                     Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
                 ],
-                connections: MapPartConnection {
-                    up: Some(2),
-                    right: Some(3),
-                    down: Some(2),
-                    left: Some(1),
-                },
             },
             MapPart {
                 start: Coordinate { x: 9, y: 5 },
@@ -592,12 +597,6 @@ mod tests {
                     Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
                     Token::OpenTile, Token::OpenTile, Token::SolidWall, Token::OpenTile;
                 ],
-                connections: MapPartConnection {
-                    up: Some(0),
-                    right: Some(1),
-                    down: Some(4),
-                    left: Some(2),
-                },
             },
             MapPart {
                 start: Coordinate { x: 9, y: 9 },
@@ -607,12 +606,6 @@ mod tests {
                     Token::OpenTile, Token::SolidWall, Token::OpenTile, Token::OpenTile;
                     Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
                 ],
-                connections: MapPartConnection {
-                    up: Some(3),
-                    right: Some(5),
-                    down: Some(0),
-                    left: Some(5),
-                },
             },
             MapPart {
                 start: Coordinate { x: 13, y: 9 },
@@ -622,14 +615,49 @@ mod tests {
                      Token::OpenTile, Token::OpenTile, Token::OpenTile, Token::OpenTile;
                      Token::OpenTile, Token::OpenTile, Token::SolidWall, Token::OpenTile;
                 ],
-                connections: MapPartConnection {
-                    up: Some(5),
-                    down: Some(5),
-                    left: Some(4),
-                    right: Some(4),
-                },
             },
         ];
+
+        let connections = vec![
+            MapPartConnection {
+                up: 4,
+                right: 0,
+                down: 3,
+                left: 0,
+            },
+            MapPartConnection {
+                up: 1,
+                right: 2,
+                down: 1,
+                left: 3,
+            },
+            MapPartConnection {
+                up: 2,
+                right: 3,
+                down: 2,
+                left: 1,
+            },
+            MapPartConnection {
+                up: 0,
+                right: 1,
+                down: 4,
+                left: 2,
+            },
+            MapPartConnection {
+                up: 3,
+                right: 5,
+                down: 0,
+                left: 5,
+            },
+            MapPartConnection {
+                up: 5,
+                down: 5,
+                left: 4,
+                right: 4,
+            },
+        ];
+
+        let map = Map { parts, connections };
 
         let path = vec![
             Step::Move(10),
@@ -655,8 +683,8 @@ mod tests {
         init();
         let input = include_str!("../test.txt");
         let (expected_map, expected_path) = get_test_input();
-        let (actual_map, actual_path) = parse_board_map(input, 4);
-        for (expected_part, actual_part) in expected_map.iter().zip(actual_map.iter()) {
+        let (actual_map, actual_path) = parse_board_map(input);
+        for (expected_part, actual_part) in expected_map.parts.iter().zip(actual_map.iter()) {
             assert_eq!(expected_part.start, actual_part.start);
             assert_eq!(expected_part.map, actual_part.map);
         }
