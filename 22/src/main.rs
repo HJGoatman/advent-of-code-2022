@@ -1,5 +1,5 @@
 use nalgebra::DMatrix;
-use std::{env, fmt::Display, fs};
+use std::{collections::HashMap, env, fmt::Display, fs};
 
 type Ordinate = u32;
 type Distance = u32;
@@ -23,67 +23,168 @@ struct MapPart {
     map: DMatrix<Token>,
 }
 
+#[derive(Debug)]
+enum Rotation {
+    Rotate90,
+    Rotate180,
+    Rotate270,
+    None,
+}
+
+fn single_90_clockwise_rotation(
+    coordinate: Coordinate,
+    length: Ordinate,
+    start: Coordinate,
+) -> Coordinate {
+    let relative_x = coordinate.x - start.x;
+    let relative_y = coordinate.y - start.y;
+
+    let y = relative_x + start.y;
+    let x = length - 1 - relative_y + start.x;
+
+    Coordinate { x, y }
+}
+
+fn rotate(
+    coordinate: Coordinate,
+    start: Coordinate,
+    width: Ordinate,
+    turns: Rotation,
+) -> Coordinate {
+    match turns {
+        Rotation::Rotate90 => single_90_clockwise_rotation(coordinate, width, start),
+        Rotation::Rotate180 => (0..2).fold(coordinate, |c: Coordinate, _| {
+            single_90_clockwise_rotation(c, width, start)
+        }),
+        Rotation::Rotate270 => (0..3).fold(coordinate, |c: Coordinate, _| {
+            single_90_clockwise_rotation(c, width, start)
+        }),
+        Rotation::None => coordinate,
+    }
+}
+
 struct Map {
     parts: Vec<MapPart>,
     connections: Vec<MapPartConnection>,
 }
+
+enum Flip {
+    Vertical,
+    Horizontal,
+}
+
 impl Map {
-    fn move_up_part(&self, state: State) -> State {
-        let potential_map_part_id = self.connections[state.current_map_part_id].up;
-        let potential_new_board = &self.parts[potential_map_part_id];
-        let potential_new_y =
-            potential_new_board.get_start().y + potential_new_board.get_height() - 1;
-        State {
-            current_map_part_id: potential_map_part_id,
-            position: Coordinate {
-                y: potential_new_y,
-                ..state.position
-            },
-            ..state
-        }
+    fn get_part(&self, part_id: usize) -> MapPart {
+        self.parts[part_id].clone()
     }
 
-    fn move_right_part(&self, state: State) -> State {
-        let potential_map_part_id = self.connections[state.current_map_part_id].right;
-        let potential_new_board = &self.parts[potential_map_part_id];
-        let potential_new_x = potential_new_board.get_start().x;
-        State {
-            current_map_part_id: potential_map_part_id,
-            position: Coordinate {
-                x: potential_new_x,
-                ..state.position
-            },
-            ..state
-        }
-    }
+    fn move_part(&self, state: State) -> State {
+        // Rotate
+        //   Depends on starting edge and ending edge.
+        //
+        // Flip
+        //   depends on rotations and starting facing
+        //
+        // Translate
+        //   Move the distance of the starts.
 
-    fn move_down_part(&self, state: State) -> State {
-        let potential_map_part_id = self.connections[state.current_map_part_id].down;
-        let potential_new_board = &self.parts[potential_map_part_id];
-        let potential_new_y = potential_new_board.get_start().y;
-        State {
-            current_map_part_id: potential_map_part_id,
-            position: Coordinate {
-                y: potential_new_y,
-                ..state.position
-            },
-            ..state
-        }
-    }
+        let connection = &self.connections[state.current_map_part_id]
+            .get(&state.facing)
+            .unwrap();
 
-    fn move_left_part(&self, state: State) -> State {
-        let potential_map_part_id = self.connections[state.current_map_part_id].left;
-        let potential_new_board = &self.parts[potential_map_part_id];
-        let potential_new_x =
-            potential_new_board.get_start().x + potential_new_board.get_width() - 1;
+        let new_edge = &connection.edge;
+        let new_map_part_id = connection.part_id;
+
+        let new_board = &self.parts[new_map_part_id];
+
+        let rotation = match state.facing {
+            Facing::Right => match new_edge {
+                Edge::Top => Rotation::Rotate270,
+                Edge::Right => Rotation::Rotate180,
+                Edge::Bottom => Rotation::Rotate90,
+                Edge::Left => Rotation::None,
+            },
+            Facing::Down => match new_edge {
+                Edge::Top => Rotation::None,
+                Edge::Right => Rotation::Rotate270,
+                Edge::Bottom => Rotation::Rotate180,
+                Edge::Left => Rotation::Rotate90,
+            },
+            Facing::Left => match new_edge {
+                Edge::Top => Rotation::Rotate270,
+                Edge::Right => Rotation::None,
+                Edge::Bottom => Rotation::Rotate90,
+                Edge::Left => Rotation::Rotate180,
+            },
+            Facing::Up => match new_edge {
+                Edge::Top => Rotation::Rotate180,
+                Edge::Right => Rotation::Rotate90,
+                Edge::Bottom => Rotation::None,
+                Edge::Left => Rotation::Rotate270,
+            },
+        };
+
+        let current_board = &self.parts[state.current_map_part_id];
+
+        log::trace!("Rotate: {:?}", &rotation);
+        let rotated = rotate(
+            state.position,
+            current_board.get_start(),
+            current_board.get_width(),
+            rotation,
+        );
+
+        log::trace!("Rotated: {:?}", rotated);
+
+        let flip = match state.facing {
+            Facing::Up | Facing::Down => Flip::Horizontal,
+            Facing::Right | Facing::Left => Flip::Vertical,
+        };
+
+        let flipped = match flip {
+            Flip::Vertical => {
+                let distance = current_board.get_width() - 1;
+                let start_x = current_board.get_start().x;
+
+                let x = (start_x + distance) - (rotated.x - start_x);
+
+                Coordinate { x, y: rotated.y }
+            }
+            Flip::Horizontal => {
+                let distance = current_board.get_height() - 1;
+
+                let start_y = current_board.get_start().y;
+                let y = (start_y + distance) - (rotated.y - start_y);
+
+                Coordinate { x: rotated.x, y }
+            }
+        };
+
+        let new_start = new_board.get_start();
+        let current_start = current_board.get_start();
+
+        let (dx, dy): (i32, i32) = (
+            new_start.x as i32 - current_start.x as i32,
+            new_start.y as i32 - current_start.y as i32,
+        );
+
+        log::trace!("Flipped: {:?}", flipped);
+        log::trace!("(dx, dy): ({}, {})", dx, dy);
+
+        let transformed = Coordinate {
+            x: (flipped.x as i32 + dx as i32).try_into().unwrap(),
+            y: (flipped.y as i32 + dy as i32).try_into().unwrap(),
+        };
 
         State {
-            current_map_part_id: potential_map_part_id,
-            position: Coordinate {
-                x: potential_new_x,
-                ..state.position
+            position: transformed,
+            facing: match new_edge {
+                Edge::Top => Facing::Down,
+                Edge::Right => Facing::Left,
+                Edge::Bottom => Facing::Up,
+                Edge::Left => Facing::Right,
             },
-            ..state
+            current_map_part_id: new_map_part_id,
         }
     }
 }
@@ -116,13 +217,21 @@ impl Rectangular for MapPart {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
-struct MapPartConnection {
-    up: usize,
-    down: usize,
-    left: usize,
-    right: usize,
+#[derive(Debug, Clone, PartialEq)]
+enum Edge {
+    Top,
+    Right,
+    Bottom,
+    Left,
 }
+
+#[derive(Debug, PartialEq, Clone)]
+struct Connection {
+    part_id: usize,
+    edge: Edge,
+}
+
+type MapPartConnection = HashMap<Facing, Connection>;
 
 #[derive(Debug, PartialEq)]
 enum Turn {
@@ -130,7 +239,7 @@ enum Turn {
     Clockwise,
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Hash, Eq, Debug, PartialEq, Copy, Clone)]
 enum Facing {
     Right,
     Down,
@@ -206,11 +315,7 @@ fn parse_map(input: &str) -> Vec<MapPart> {
     // All cube nets have a single square with at some point, this is our part length.
     let part_length = tokenised
         .iter()
-        .map(|row| {
-            row.into_iter()
-                .filter(|&&token| token != Token::Blank)
-                .count()
-        })
+        .map(|row| row.iter().filter(|&&token| token != Token::Blank).count())
         .min()
         .unwrap();
 
@@ -368,17 +473,29 @@ fn create_flat_map(parts: &[MapPart]) -> Map {
         let col_index = col.iter().position(|&r| r == val).unwrap() as i8;
         let row_index = row.iter().position(|&r| r == val).unwrap() as i8;
 
-        let up = get_wrap_part(col_index - 1, &col);
-        let down = get_wrap_part(col_index + 1, &col);
-        let right = get_wrap_part(row_index + 1, &row);
-        let left = get_wrap_part(row_index - 1, &row);
+        let up = Connection {
+            part_id: get_wrap_part(col_index - 1, &col),
+            edge: Edge::Bottom,
+        };
+        let down = Connection {
+            part_id: get_wrap_part(col_index + 1, &col),
+            edge: Edge::Top,
+        };
+        let right = Connection {
+            part_id: get_wrap_part(row_index + 1, &row),
+            edge: Edge::Left,
+        };
+        let left = Connection {
+            part_id: get_wrap_part(row_index - 1, &row),
+            edge: Edge::Right,
+        };
 
-        connections.push(MapPartConnection {
-            up,
-            right,
-            down,
-            left,
-        });
+        connections.push(HashMap::from([
+            (Facing::Up, up),
+            (Facing::Right, right),
+            (Facing::Down, down),
+            (Facing::Left, left),
+        ]));
     }
     //
     log::debug!("Connections: {:#?}", connections);
@@ -390,17 +507,12 @@ fn create_flat_map(parts: &[MapPart]) -> Map {
 }
 
 fn move_across_map(map: &Map, state: State, distance: Distance) -> State {
-    log::debug!(
-        "At {:?}, going {:?}, {} places.",
-        state.position,
-        state.facing,
-        distance
-    );
+    log::debug!("State : {:#?}, distance: {}", state, distance);
 
     let mut state = state;
 
     for _ in 0..distance {
-        let current_map_part = &map.parts[state.current_map_part_id];
+        let current_map_part = map.get_part(state.current_map_part_id);
         let facing = state.facing;
         let position = state.position;
 
@@ -410,7 +522,7 @@ fn move_across_map(map: &Map, state: State, distance: Distance) -> State {
             Facing::Up => {
                 let is_at_top_edge = position.y == current_start.y;
                 if is_at_top_edge {
-                    map.move_up_part(state)
+                    map.move_part(state)
                 } else {
                     State {
                         position: Coordinate {
@@ -425,7 +537,7 @@ fn move_across_map(map: &Map, state: State, distance: Distance) -> State {
                 let is_at_right_edge =
                     position.x == current_start.x + current_map_part.get_width() - 1;
                 if is_at_right_edge {
-                    map.move_right_part(state)
+                    map.move_part(state)
                 } else {
                     State {
                         position: Coordinate {
@@ -440,7 +552,7 @@ fn move_across_map(map: &Map, state: State, distance: Distance) -> State {
                 let is_at_bottom_edge =
                     position.y == current_start.y + current_map_part.get_height() - 1;
                 if is_at_bottom_edge {
-                    map.move_down_part(state)
+                    map.move_part(state)
                 } else {
                     State {
                         position: Coordinate {
@@ -454,7 +566,7 @@ fn move_across_map(map: &Map, state: State, distance: Distance) -> State {
             Facing::Left => {
                 let is_at_left_edge = position.x == current_start.x;
                 if is_at_left_edge {
-                    map.move_left_part(state)
+                    map.move_part(state)
                 } else {
                     State {
                         position: Coordinate {
@@ -467,13 +579,15 @@ fn move_across_map(map: &Map, state: State, distance: Distance) -> State {
             }
         };
 
-        let current_part = &map.parts[potential_state.current_map_part_id];
+        let current_part = map.get_part(potential_state.current_map_part_id);
         if current_part.has_wall_at_point(potential_state.position) {
             log::debug!("Has wall at point! {:?}", potential_state.position);
             break;
         }
 
         state = potential_state;
+
+        log::trace!("State : {:#?}", state);
     }
 
     state
@@ -512,16 +626,13 @@ fn follow_step(board_map: &Map, state: State, step: &Step) -> State {
 }
 
 fn walk(board_map: &Map, path: &[Step]) -> State {
-    for map_part in board_map.parts.iter() {
-        log::debug!("{:?}", map_part.start);
-        log::debug!("{}", map_part.map);
-    }
-
     let initial_state = State {
-        position: board_map.parts.get(0).unwrap().start,
+        position: board_map.get_part(0).start,
         facing: Facing::Right,
         current_map_part_id: 0,
     };
+
+    log::debug!("Initial State: {:?}", initial_state);
 
     let mut current_state = initial_state;
     for step in path.iter() {
@@ -540,6 +651,7 @@ fn main() {
     env_logger::init();
     let input = load_input();
     let (map_parts, path) = parse_board_map(&input);
+
     let flat_map = create_flat_map(&map_parts);
     let final_state = walk(&flat_map, &path);
     let final_password = determine_password(&final_state);
@@ -548,19 +660,21 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use nalgebra::dmatrix;
 
     use crate::Turn::{AntiClockwise, Clockwise};
     use crate::{
-        determine_password, parse_board_map, walk, Coordinate, Facing, Map, MapPart,
-        MapPartConnection, Path, State, Step, Token,
+        determine_password, parse_board_map, single_90_clockwise_rotation, walk, Connection,
+        Coordinate, Edge, Facing, Map, MapPart, Path, State, Step, Token,
     };
 
     fn init() {
         let _ = env_logger::builder().is_test(true).try_init();
     }
 
-    fn get_test_input() -> (Map, Path) {
+    fn get_test_parts() -> (Vec<MapPart>, Vec<Step>) {
         let parts = vec![
             MapPart {
                 start: Coordinate { x: 9, y: 1 },
@@ -618,47 +732,6 @@ mod tests {
             },
         ];
 
-        let connections = vec![
-            MapPartConnection {
-                up: 4,
-                right: 0,
-                down: 3,
-                left: 0,
-            },
-            MapPartConnection {
-                up: 1,
-                right: 2,
-                down: 1,
-                left: 3,
-            },
-            MapPartConnection {
-                up: 2,
-                right: 3,
-                down: 2,
-                left: 1,
-            },
-            MapPartConnection {
-                up: 0,
-                right: 1,
-                down: 4,
-                left: 2,
-            },
-            MapPartConnection {
-                up: 3,
-                right: 5,
-                down: 0,
-                left: 5,
-            },
-            MapPartConnection {
-                up: 5,
-                down: 5,
-                left: 4,
-                right: 4,
-            },
-        ];
-
-        let map = Map { parts, connections };
-
         let path = vec![
             Step::Move(10),
             Step::Turn(Clockwise),
@@ -675,6 +748,388 @@ mod tests {
             Step::Move(5),
         ];
 
+        (parts, path)
+    }
+
+    fn get_part_1_test_input() -> (Map, Path) {
+        let (parts, path) = get_test_parts();
+
+        let connections = vec![
+            HashMap::from([
+                (
+                    Facing::Up,
+                    Connection {
+                        part_id: 4,
+                        edge: Edge::Bottom,
+                    },
+                ),
+                (
+                    Facing::Right,
+                    Connection {
+                        part_id: 0,
+                        edge: Edge::Left,
+                    },
+                ),
+                (
+                    Facing::Down,
+                    Connection {
+                        part_id: 3,
+                        edge: Edge::Top,
+                    },
+                ),
+                (
+                    Facing::Left,
+                    Connection {
+                        part_id: 0,
+                        edge: Edge::Right,
+                    },
+                ),
+            ]),
+            HashMap::from([
+                (
+                    Facing::Up,
+                    Connection {
+                        part_id: 1,
+                        edge: Edge::Bottom,
+                    },
+                ),
+                (
+                    Facing::Right,
+                    Connection {
+                        part_id: 2,
+                        edge: Edge::Left,
+                    },
+                ),
+                (
+                    Facing::Down,
+                    Connection {
+                        part_id: 1,
+                        edge: Edge::Top,
+                    },
+                ),
+                (
+                    Facing::Left,
+                    Connection {
+                        part_id: 3,
+                        edge: Edge::Right,
+                    },
+                ),
+            ]),
+            HashMap::from([
+                (
+                    Facing::Up,
+                    Connection {
+                        part_id: 2,
+                        edge: Edge::Bottom,
+                    },
+                ),
+                (
+                    Facing::Right,
+                    Connection {
+                        part_id: 3,
+                        edge: Edge::Left,
+                    },
+                ),
+                (
+                    Facing::Down,
+                    Connection {
+                        part_id: 2,
+                        edge: Edge::Top,
+                    },
+                ),
+                (
+                    Facing::Left,
+                    Connection {
+                        part_id: 1,
+                        edge: Edge::Right,
+                    },
+                ),
+            ]),
+            HashMap::from([
+                (
+                    Facing::Up,
+                    Connection {
+                        part_id: 0,
+                        edge: Edge::Bottom,
+                    },
+                ),
+                (
+                    Facing::Right,
+                    Connection {
+                        part_id: 1,
+                        edge: Edge::Left,
+                    },
+                ),
+                (
+                    Facing::Down,
+                    Connection {
+                        part_id: 4,
+                        edge: Edge::Top,
+                    },
+                ),
+                (
+                    Facing::Left,
+                    Connection {
+                        part_id: 2,
+                        edge: Edge::Right,
+                    },
+                ),
+            ]),
+            HashMap::from([
+                (
+                    Facing::Up,
+                    Connection {
+                        part_id: 3,
+                        edge: Edge::Bottom,
+                    },
+                ),
+                (
+                    Facing::Right,
+                    Connection {
+                        part_id: 5,
+                        edge: Edge::Left,
+                    },
+                ),
+                (
+                    Facing::Down,
+                    Connection {
+                        part_id: 0,
+                        edge: Edge::Top,
+                    },
+                ),
+                (
+                    Facing::Left,
+                    Connection {
+                        part_id: 5,
+                        edge: Edge::Right,
+                    },
+                ),
+            ]),
+            HashMap::from([
+                (
+                    Facing::Up,
+                    Connection {
+                        part_id: 5,
+                        edge: Edge::Bottom,
+                    },
+                ),
+                (
+                    Facing::Down,
+                    Connection {
+                        part_id: 5,
+                        edge: Edge::Left,
+                    },
+                ),
+                (
+                    Facing::Left,
+                    Connection {
+                        part_id: 4,
+                        edge: Edge::Top,
+                    },
+                ),
+                (
+                    Facing::Right,
+                    Connection {
+                        part_id: 4,
+                        edge: Edge::Right,
+                    },
+                ),
+            ]),
+        ];
+
+        let map = Map { parts, connections };
+
+        (map, path)
+    }
+
+    fn get_part_2_test_input() -> (Map, Path) {
+        let (parts, path) = get_test_parts();
+
+        let connections = vec![
+            HashMap::from([
+                (
+                    Facing::Up,
+                    Connection {
+                        part_id: 1,
+                        edge: Edge::Top,
+                    },
+                ),
+                (
+                    Facing::Right,
+                    Connection {
+                        part_id: 5,
+                        edge: Edge::Right,
+                    },
+                ),
+                (
+                    Facing::Down,
+                    Connection {
+                        part_id: 3,
+                        edge: Edge::Top,
+                    },
+                ),
+                (
+                    Facing::Left,
+                    Connection {
+                        part_id: 2,
+                        edge: Edge::Top,
+                    },
+                ),
+            ]),
+            HashMap::from([
+                (
+                    Facing::Up,
+                    Connection {
+                        part_id: 0,
+                        edge: Edge::Top,
+                    },
+                ),
+                (
+                    Facing::Right,
+                    Connection {
+                        part_id: 2,
+                        edge: Edge::Left,
+                    },
+                ),
+                (
+                    Facing::Down,
+                    Connection {
+                        part_id: 4,
+                        edge: Edge::Bottom,
+                    },
+                ),
+                (
+                    Facing::Left,
+                    Connection {
+                        part_id: 5,
+                        edge: Edge::Bottom,
+                    },
+                ),
+            ]),
+            HashMap::from([
+                (
+                    Facing::Up,
+                    Connection {
+                        part_id: 0,
+                        edge: Edge::Left,
+                    },
+                ),
+                (
+                    Facing::Right,
+                    Connection {
+                        part_id: 3,
+                        edge: Edge::Left,
+                    },
+                ),
+                (
+                    Facing::Down,
+                    Connection {
+                        part_id: 4,
+                        edge: Edge::Left,
+                    },
+                ),
+                (
+                    Facing::Left,
+                    Connection {
+                        part_id: 1,
+                        edge: Edge::Right,
+                    },
+                ),
+            ]),
+            HashMap::from([
+                (
+                    Facing::Up,
+                    Connection {
+                        part_id: 0,
+                        edge: Edge::Bottom,
+                    },
+                ),
+                (
+                    Facing::Right,
+                    Connection {
+                        part_id: 5,
+                        edge: Edge::Top,
+                    },
+                ),
+                (
+                    Facing::Down,
+                    Connection {
+                        part_id: 4,
+                        edge: Edge::Top,
+                    },
+                ),
+                (
+                    Facing::Left,
+                    Connection {
+                        part_id: 2,
+                        edge: Edge::Right,
+                    },
+                ),
+            ]),
+            HashMap::from([
+                (
+                    Facing::Up,
+                    Connection {
+                        part_id: 3,
+                        edge: Edge::Bottom,
+                    },
+                ),
+                (
+                    Facing::Right,
+                    Connection {
+                        part_id: 5,
+                        edge: Edge::Left,
+                    },
+                ),
+                (
+                    Facing::Down,
+                    Connection {
+                        part_id: 1,
+                        edge: Edge::Bottom,
+                    },
+                ),
+                (
+                    Facing::Left,
+                    Connection {
+                        part_id: 2,
+                        edge: Edge::Bottom,
+                    },
+                ),
+            ]),
+            HashMap::from([
+                (
+                    Facing::Up,
+                    Connection {
+                        part_id: 3,
+                        edge: Edge::Right,
+                    },
+                ),
+                (
+                    Facing::Down,
+                    Connection {
+                        part_id: 1,
+                        edge: Edge::Left,
+                    },
+                ),
+                (
+                    Facing::Left,
+                    Connection {
+                        part_id: 4,
+                        edge: Edge::Right,
+                    },
+                ),
+                (
+                    Facing::Right,
+                    Connection {
+                        part_id: 0,
+                        edge: Edge::Right,
+                    },
+                ),
+            ]),
+        ];
+
+        let map = Map { parts, connections };
+
         (map, path)
     }
 
@@ -682,7 +1137,7 @@ mod tests {
     fn test_parse_board_map() {
         init();
         let input = include_str!("../test.txt");
-        let (expected_map, expected_path) = get_test_input();
+        let (expected_map, expected_path) = get_part_1_test_input();
         let (actual_map, actual_path) = parse_board_map(input);
         for (expected_part, actual_part) in expected_map.parts.iter().zip(actual_map.iter()) {
             assert_eq!(expected_part.start, actual_part.start);
@@ -694,13 +1149,22 @@ mod tests {
     #[test]
     fn test_walk() {
         init();
-        let (map, path) = get_test_input();
+        let (map, path) = get_part_1_test_input();
         let expected = State {
             position: Coordinate { x: 8, y: 6 },
             facing: Facing::Right,
             current_map_part_id: 2,
         };
         let actual = walk(&map, &path);
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_walk_part_2() {
+        init();
+        let (map, path) = get_part_2_test_input();
+        let expected = Coordinate { x: 7, y: 5 };
+        let actual = walk(&map, &path).position;
         assert_eq!(expected, actual);
     }
 
@@ -714,5 +1178,25 @@ mod tests {
         let expected = 6032;
         let actual = determine_password(&input);
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_rotate() {
+        let input = Coordinate { x: 12, y: 6 };
+        let start = Coordinate { x: 9, y: 5 };
+        let expected_1 = Coordinate { x: 11, y: 8 };
+        let actual_1 = single_90_clockwise_rotation(input, 4, start);
+
+        assert_eq!(expected_1, actual_1);
+
+        let expected_2 = Coordinate { x: 9, y: 7 };
+        let actual_2 = single_90_clockwise_rotation(actual_1, 4, start);
+
+        assert_eq!(expected_2, actual_2);
+
+        let expected_3 = Coordinate { x: 10, y: 5 };
+        let actual_3 = single_90_clockwise_rotation(actual_2, 4, start);
+
+        assert_eq!(expected_3, actual_3);
     }
 }
