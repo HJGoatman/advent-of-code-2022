@@ -1,4 +1,6 @@
 use nalgebra::DMatrix;
+use petgraph::algo::isomorphism::is_isomorphic;
+use petgraph::graph::UnGraph;
 use std::{collections::HashMap, env, fmt::Display, fs};
 
 type Ordinate = u32;
@@ -111,9 +113,9 @@ impl Map {
                 Edge::Left => Rotation::Rotate90,
             },
             Facing::Left => match new_edge {
-                Edge::Top => Rotation::Rotate270,
+                Edge::Top => Rotation::Rotate90,
                 Edge::Right => Rotation::None,
-                Edge::Bottom => Rotation::Rotate90,
+                Edge::Bottom => Rotation::Rotate270,
                 Edge::Left => Rotation::Rotate180,
             },
             Facing::Up => match new_edge {
@@ -406,7 +408,14 @@ fn parse_board_map(input: &str) -> (Vec<MapPart>, Path) {
     (map_parts, path)
 }
 
-fn create_flat_map(parts: &[MapPart]) -> Map {
+type Net = nalgebra::Matrix<
+    Option<u8>,
+    nalgebra::Dyn,
+    nalgebra::Dyn,
+    nalgebra::VecStorage<Option<u8>, nalgebra::Dyn, nalgebra::Dyn>,
+>;
+
+fn create_net(parts: &[MapPart]) -> (Vec<Coordinate>, Net) {
     let starts: Vec<Coordinate> = parts
         .iter()
         .map(|part| {
@@ -450,6 +459,12 @@ fn create_flat_map(parts: &[MapPart]) -> Map {
             None => " ".to_string(),
         })
     );
+
+    (starts, net)
+}
+
+fn create_flat_map(parts: &[MapPart]) -> Map {
+    let (starts, net) = create_net(parts);
 
     let mut connections = Vec::new();
     for Coordinate { x, y } in starts {
@@ -656,6 +671,536 @@ fn main() {
     let final_state = walk(&flat_map, &path);
     let final_password = determine_password(&final_state);
     println!("{}", final_password);
+
+    let cube_map = create_cube_map(&map_parts);
+    let part_2_state = walk(&cube_map, &path);
+    let part_2_password = determine_password(&part_2_state);
+    println!("{}", part_2_password);
+}
+
+fn create_graph(starts: &[Coordinate], net: Net) -> UnGraph<(), (), u8> {
+    let mut edges = Vec::new();
+
+    for start in starts {
+        let (x, y) = (start.x.try_into().unwrap(), start.y.try_into().unwrap());
+        let face_id = net[(y, x)].unwrap();
+
+        const NODES_PER_FACE: u8 = 4;
+
+        const TOP_EDGE_INDEX: u8 = 0;
+        const RIGHT_EDGE_INDEX: u8 = 1;
+        const BOTTOM_EDGE_INDEX: u8 = 2;
+        const LEFT_EDGE_INDEX: u8 = 3;
+
+        let top_node = NODES_PER_FACE * face_id + TOP_EDGE_INDEX;
+        let right_node = NODES_PER_FACE * face_id + RIGHT_EDGE_INDEX;
+        let bottom_node = NODES_PER_FACE * face_id + BOTTOM_EDGE_INDEX;
+        let left_node = NODES_PER_FACE * face_id + LEFT_EDGE_INDEX;
+
+        edges.push((top_node, right_node));
+        edges.push((right_node, bottom_node));
+        edges.push((bottom_node, left_node));
+        edges.push((left_node, top_node));
+
+        if y > 0 {
+            if let Some(above_face) = net[(y - 1, x)] {
+                let above_face_bottom_edge = NODES_PER_FACE * above_face + BOTTOM_EDGE_INDEX;
+                edges.push((top_node, above_face_bottom_edge));
+            }
+        }
+
+        if x < net.shape().1 - 2 {
+            if let Some(right_face) = net[(y, x + 1)] {
+                let right_face_left_edge = NODES_PER_FACE * right_face + LEFT_EDGE_INDEX;
+                edges.push((right_node, right_face_left_edge));
+            }
+        }
+
+        if y < net.shape().0 - 2 {
+            if let Some(bottom_face) = net[(y + 1, x)] {
+                let bottom_face_top_edge = NODES_PER_FACE * bottom_face + TOP_EDGE_INDEX;
+                edges.push((bottom_node, bottom_face_top_edge));
+            }
+        }
+
+        if x > 0 {
+            if let Some(left_face) = net[(y, x - 1)] {
+                let left_face_right_edge = NODES_PER_FACE * left_face + RIGHT_EDGE_INDEX;
+                edges.push((left_node, left_face_right_edge));
+            }
+        }
+    }
+
+    let graph = UnGraph::<(), (), u8>::from_edges(&edges);
+
+    log::debug!("{:?}", graph);
+
+    graph
+}
+
+fn create_cube_map(map_parts: &[MapPart]) -> Map {
+    for part in map_parts {
+        log::debug!("Start: {:?}", part.start);
+        log::debug!("{}", part.map);
+    }
+
+    let (starts, net) = create_net(map_parts);
+    let graph = create_graph(&starts, net);
+    let connections = get_connections(graph);
+
+    Map {
+        parts: map_parts.to_vec(),
+        connections,
+    }
+}
+
+fn get_connections(graph: UnGraph<(), (), u8>) -> Vec<MapPartConnection> {
+    let graph_to_connections_map: Vec<(UnGraph<(), (), u8>, Vec<MapPartConnection>)> = vec![
+        (
+            UnGraph::<(), (), u8>::from_edges(&[
+                (0, 1),
+                (1, 2),
+                (2, 3),
+                (3, 0),
+                (2, 8),
+                (4, 5),
+                (5, 6),
+                (6, 7),
+                (7, 4),
+                (7, 1),
+                (8, 9),
+                (9, 10),
+                (10, 11),
+                (11, 8),
+                (8, 2),
+                (10, 16),
+                (12, 13),
+                (13, 14),
+                (14, 15),
+                (15, 12),
+                (13, 19),
+                (16, 17),
+                (17, 18),
+                (18, 19),
+                (19, 16),
+                (16, 10),
+                (19, 13),
+                (20, 21),
+                (21, 22),
+                (22, 23),
+                (23, 20),
+                (20, 14),
+            ]),
+            vec![
+                HashMap::from([
+                    (
+                        Facing::Up,
+                        Connection {
+                            part_id: 5,
+                            edge: Edge::Left,
+                        },
+                    ),
+                    (
+                        Facing::Right,
+                        Connection {
+                            part_id: 1,
+                            edge: Edge::Left,
+                        },
+                    ),
+                    (
+                        Facing::Down,
+                        Connection {
+                            part_id: 2,
+                            edge: Edge::Top,
+                        },
+                    ),
+                    (
+                        Facing::Left,
+                        Connection {
+                            part_id: 3,
+                            edge: Edge::Left,
+                        },
+                    ),
+                ]),
+                HashMap::from([
+                    (
+                        Facing::Up,
+                        Connection {
+                            part_id: 5,
+                            edge: Edge::Bottom,
+                        },
+                    ),
+                    (
+                        Facing::Right,
+                        Connection {
+                            part_id: 4,
+                            edge: Edge::Right,
+                        },
+                    ),
+                    (
+                        Facing::Down,
+                        Connection {
+                            part_id: 2,
+                            edge: Edge::Right,
+                        },
+                    ),
+                    (
+                        Facing::Left,
+                        Connection {
+                            part_id: 0,
+                            edge: Edge::Right,
+                        },
+                    ),
+                ]),
+                HashMap::from([
+                    (
+                        Facing::Up,
+                        Connection {
+                            part_id: 0,
+                            edge: Edge::Bottom,
+                        },
+                    ),
+                    (
+                        Facing::Right,
+                        Connection {
+                            part_id: 1,
+                            edge: Edge::Bottom,
+                        },
+                    ),
+                    (
+                        Facing::Down,
+                        Connection {
+                            part_id: 4,
+                            edge: Edge::Top,
+                        },
+                    ),
+                    (
+                        Facing::Left,
+                        Connection {
+                            part_id: 3,
+                            edge: Edge::Top,
+                        },
+                    ),
+                ]),
+                HashMap::from([
+                    (
+                        Facing::Up,
+                        Connection {
+                            part_id: 2,
+                            edge: Edge::Left,
+                        },
+                    ),
+                    (
+                        Facing::Right,
+                        Connection {
+                            part_id: 4,
+                            edge: Edge::Left,
+                        },
+                    ),
+                    (
+                        Facing::Down,
+                        Connection {
+                            part_id: 5,
+                            edge: Edge::Top,
+                        },
+                    ),
+                    (
+                        Facing::Left,
+                        Connection {
+                            part_id: 0,
+                            edge: Edge::Left,
+                        },
+                    ),
+                ]),
+                HashMap::from([
+                    (
+                        Facing::Up,
+                        Connection {
+                            part_id: 2,
+                            edge: Edge::Bottom,
+                        },
+                    ),
+                    (
+                        Facing::Right,
+                        Connection {
+                            part_id: 1,
+                            edge: Edge::Right,
+                        },
+                    ),
+                    (
+                        Facing::Down,
+                        Connection {
+                            part_id: 5,
+                            edge: Edge::Right,
+                        },
+                    ),
+                    (
+                        Facing::Left,
+                        Connection {
+                            part_id: 3,
+                            edge: Edge::Right,
+                        },
+                    ),
+                ]),
+                HashMap::from([
+                    (
+                        Facing::Up,
+                        Connection {
+                            part_id: 3,
+                            edge: Edge::Bottom,
+                        },
+                    ),
+                    (
+                        Facing::Right,
+                        Connection {
+                            part_id: 4,
+                            edge: Edge::Bottom,
+                        },
+                    ),
+                    (
+                        Facing::Down,
+                        Connection {
+                            part_id: 1,
+                            edge: Edge::Top,
+                        },
+                    ),
+                    (
+                        Facing::Left,
+                        Connection {
+                            part_id: 0,
+                            edge: Edge::Top,
+                        },
+                    ),
+                ]),
+            ],
+        ),
+        (
+            UnGraph::<(), (), u8>::from_edges(&[
+                (0, 1),
+                (1, 2),
+                (2, 3),
+                (3, 0),
+                (2, 12),
+                (4, 5),
+                (5, 6),
+                (6, 7),
+                (7, 4),
+                (5, 11),
+                (8, 9),
+                (9, 10),
+                (10, 11),
+                (11, 8),
+                (9, 15),
+                (11, 5),
+                (12, 13),
+                (13, 14),
+                (14, 15),
+                (15, 12),
+                (12, 2),
+                (15, 9),
+                (16, 17),
+                (17, 18),
+                (18, 19),
+                (19, 16),
+                (16, 14),
+                (20, 21),
+                (21, 22),
+                (22, 23),
+                (23, 20),
+                (23, 17),
+            ]),
+            vec![
+                HashMap::from([
+                    (
+                        Facing::Up,
+                        Connection {
+                            part_id: 1,
+                            edge: Edge::Top,
+                        },
+                    ),
+                    (
+                        Facing::Right,
+                        Connection {
+                            part_id: 5,
+                            edge: Edge::Right,
+                        },
+                    ),
+                    (
+                        Facing::Down,
+                        Connection {
+                            part_id: 3,
+                            edge: Edge::Top,
+                        },
+                    ),
+                    (
+                        Facing::Left,
+                        Connection {
+                            part_id: 2,
+                            edge: Edge::Top,
+                        },
+                    ),
+                ]),
+                HashMap::from([
+                    (
+                        Facing::Up,
+                        Connection {
+                            part_id: 0,
+                            edge: Edge::Top,
+                        },
+                    ),
+                    (
+                        Facing::Right,
+                        Connection {
+                            part_id: 2,
+                            edge: Edge::Left,
+                        },
+                    ),
+                    (
+                        Facing::Down,
+                        Connection {
+                            part_id: 4,
+                            edge: Edge::Bottom,
+                        },
+                    ),
+                    (
+                        Facing::Left,
+                        Connection {
+                            part_id: 5,
+                            edge: Edge::Bottom,
+                        },
+                    ),
+                ]),
+                HashMap::from([
+                    (
+                        Facing::Up,
+                        Connection {
+                            part_id: 0,
+                            edge: Edge::Left,
+                        },
+                    ),
+                    (
+                        Facing::Right,
+                        Connection {
+                            part_id: 3,
+                            edge: Edge::Left,
+                        },
+                    ),
+                    (
+                        Facing::Down,
+                        Connection {
+                            part_id: 4,
+                            edge: Edge::Left,
+                        },
+                    ),
+                    (
+                        Facing::Left,
+                        Connection {
+                            part_id: 1,
+                            edge: Edge::Right,
+                        },
+                    ),
+                ]),
+                HashMap::from([
+                    (
+                        Facing::Up,
+                        Connection {
+                            part_id: 0,
+                            edge: Edge::Bottom,
+                        },
+                    ),
+                    (
+                        Facing::Right,
+                        Connection {
+                            part_id: 5,
+                            edge: Edge::Top,
+                        },
+                    ),
+                    (
+                        Facing::Down,
+                        Connection {
+                            part_id: 4,
+                            edge: Edge::Top,
+                        },
+                    ),
+                    (
+                        Facing::Left,
+                        Connection {
+                            part_id: 2,
+                            edge: Edge::Right,
+                        },
+                    ),
+                ]),
+                HashMap::from([
+                    (
+                        Facing::Up,
+                        Connection {
+                            part_id: 3,
+                            edge: Edge::Bottom,
+                        },
+                    ),
+                    (
+                        Facing::Right,
+                        Connection {
+                            part_id: 5,
+                            edge: Edge::Left,
+                        },
+                    ),
+                    (
+                        Facing::Down,
+                        Connection {
+                            part_id: 1,
+                            edge: Edge::Bottom,
+                        },
+                    ),
+                    (
+                        Facing::Left,
+                        Connection {
+                            part_id: 2,
+                            edge: Edge::Bottom,
+                        },
+                    ),
+                ]),
+                HashMap::from([
+                    (
+                        Facing::Up,
+                        Connection {
+                            part_id: 3,
+                            edge: Edge::Right,
+                        },
+                    ),
+                    (
+                        Facing::Down,
+                        Connection {
+                            part_id: 1,
+                            edge: Edge::Left,
+                        },
+                    ),
+                    (
+                        Facing::Left,
+                        Connection {
+                            part_id: 4,
+                            edge: Edge::Right,
+                        },
+                    ),
+                    (
+                        Facing::Right,
+                        Connection {
+                            part_id: 0,
+                            edge: Edge::Right,
+                        },
+                    ),
+                ]),
+            ],
+        ),
+    ];
+
+    match graph_to_connections_map
+        .into_iter()
+        .find(|(other_graph, _)| is_isomorphic(&graph, other_graph))
+    {
+        Some((_, connections)) => connections.to_vec(),
+        None => todo!(),
+    }
 }
 
 #[cfg(test)]
