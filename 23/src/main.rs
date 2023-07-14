@@ -31,7 +31,7 @@ impl Add for Position {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct Elves {
     positions: Vec<Position>,
 }
@@ -59,6 +59,76 @@ impl Display for Elves {
         }
 
         Ok(())
+    }
+}
+
+struct ElvesIterator {
+    order: [Direction; 4],
+    elves: Elves,
+}
+
+impl ElvesIterator {
+    pub fn new(elves: &Elves) -> Self {
+        let order = [
+            Direction::North,
+            Direction::South,
+            Direction::West,
+            Direction::East,
+        ];
+
+        let elves = elves.clone();
+
+        ElvesIterator { order, elves }
+    }
+}
+
+impl Iterator for ElvesIterator {
+    type Item = Elves;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        log::debug!("{:?}", self.order);
+
+        let proposals: Vec<Option<Position>> = self
+            .elves
+            .positions
+            .iter()
+            .map(|pos| get_proposal(pos, &self.elves.positions, &self.order))
+            .collect();
+
+        let proposal_counts = get_proposal_counts(&proposals);
+
+        let proposals: Vec<Option<Position>> = proposals
+            .iter()
+            .cloned()
+            .map(|proposal| match proposal_counts.get(&proposal) {
+                Some(count) => {
+                    if *count > 1 {
+                        None
+                    } else {
+                        proposal
+                    }
+                }
+                None => None,
+            })
+            .collect();
+
+        let positions = self
+            .elves
+            .positions
+            .iter()
+            .zip(proposals)
+            .map(|(current_position, new_position)| match new_position {
+                Some(position) => position,
+                None => current_position.clone(),
+            })
+            .collect();
+
+        self.elves = Elves { positions };
+        self.order.rotate_left(1);
+
+        log::debug!("{}", self.elves);
+
+        return Some(self.elves.clone());
     }
 }
 
@@ -136,57 +206,15 @@ fn get_proposal(pos: &Position, elves: &[Position], order: &[Direction]) -> Opti
 }
 
 fn run_process(elves: &Elves, num_rounds: i8) -> Elves {
-    let mut new_elves = elves.clone();
-    let mut order = [
-        Direction::North,
-        Direction::South,
-        Direction::West,
-        Direction::East,
-    ];
+    let mut elves_iter = ElvesIterator::new(elves);
+
+    let mut elves = elves.clone();
 
     for _ in 0..num_rounds {
-        log::debug!("{:?}", order);
-
-        let proposals: Vec<Option<Position>> = new_elves
-            .positions
-            .iter()
-            .map(|pos| get_proposal(pos, &new_elves.positions, &order))
-            .collect();
-
-        let proposal_counts = get_proposal_counts(&proposals);
-
-        let proposals: Vec<Option<Position>> = proposals
-            .iter()
-            .cloned()
-            .map(|proposal| match proposal_counts.get(&proposal) {
-                Some(count) => {
-                    if *count > 1 {
-                        None
-                    } else {
-                        proposal
-                    }
-                }
-                None => None,
-            })
-            .collect();
-
-        let positions = new_elves
-            .positions
-            .into_iter()
-            .zip(proposals)
-            .map(|(current_position, new_position)| match new_position {
-                Some(position) => position,
-                None => current_position,
-            })
-            .collect();
-
-        new_elves = Elves { positions };
-        order.rotate_left(1);
-
-        log::debug!("{}", new_elves);
+        elves = elves_iter.next().unwrap();
     }
 
-    new_elves
+    elves
 }
 
 fn get_proposal_counts(proposals: &[Option<Position>]) -> HashMap<&Option<Position>, u8> {
@@ -209,15 +237,41 @@ fn main() {
 
     let input = load_input();
 
-    let mut elves = parse_elves(&input);
+    let elves = parse_elves(&input);
     log::debug!("{}", &elves);
 
     const NUM_ROUNDS: i8 = 10;
-    elves = run_process(&elves, NUM_ROUNDS);
+    let elves_1 = run_process(&elves, NUM_ROUNDS);
     log::debug!("{}", &elves);
 
-    let empty_ground_tiles = count_empty_ground_tiles(&elves);
+    let empty_ground_tiles = count_empty_ground_tiles(&elves_1);
     println!("{}", empty_ground_tiles);
+
+    let round = first_round_no_elves_move(&elves);
+    println!("{}", round);
+}
+
+fn first_round_no_elves_move(elves: &Elves) -> u32 {
+    let mut elves_iter = ElvesIterator::new(elves);
+
+    let mut previous_elves = elves.clone();
+
+    let mut round = 1;
+
+    loop {
+        let new_elves = elves_iter.next().unwrap();
+
+        log::debug!("{}\n{}", previous_elves, new_elves);
+
+        if previous_elves == new_elves {
+            break;
+        }
+
+        previous_elves = new_elves;
+        round += 1;
+    }
+
+    round
 }
 
 fn count_empty_ground_tiles(elves: &Elves) -> u32 {
