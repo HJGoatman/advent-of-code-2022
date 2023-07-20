@@ -383,23 +383,45 @@ fn main() {
         process::exit(1);
     });
 
-    let time = find_quickest_time_to_goal(valley);
-    println!("{}", time.unwrap());
-}
-
-fn find_quickest_time_to_goal(valley: Valley) -> Option<u32> {
-    log::debug!("{}", valley);
-
     let start = Coordinate { x: 1, y: 0 };
     let end = Coordinate {
         x: &valley.get_width() - 2,
         y: &valley.get_height() - 1,
     };
+    let (time, valley) = find_quickest_time_to_goal(start, end, valley).unwrap();
+    println!("{}", time);
+
+    let (time_back_to_start, valley) = find_quickest_time_to_goal(end, start, valley).unwrap();
+    log::info!(
+        "trip back to the start takes {} minutes",
+        time_back_to_start
+    );
+
+    let (time_back_to_end, _) = find_quickest_time_to_goal(start, end, valley).unwrap();
+    log::info!("trip back to the goal takes {} minutes", time_back_to_end);
+
+    let total_time = time + time_back_to_start + time_back_to_end;
+    println!("{}", total_time);
+}
+
+fn find_quickest_time_to_goal(
+    start: Coordinate,
+    end: Coordinate,
+    valley: Valley,
+) -> Option<(u32, Valley)> {
+    log::debug!("{}", valley);
 
     let mut queue = BinaryHeap::new();
 
     fn h(pos: Coordinate, end: Coordinate) -> u32 {
-        ((end.x - pos.x) + (end.y - pos.y)).try_into().unwrap()
+        let end_x = end.x as i32;
+        let pos_x = pos.x as i32;
+        let end_y = end.y as i32;
+        let pos_y = pos.y as i32;
+
+        ((end_x - pos_x).abs() + (end_y - pos_y).abs())
+            .try_into()
+            .unwrap()
     }
 
     queue.push(Reverse(State {
@@ -418,7 +440,7 @@ fn find_quickest_time_to_goal(valley: Valley) -> Option<u32> {
         } = state;
 
         if current_position == end {
-            return Some(current_time);
+            return Some((current_time, valley));
         }
 
         let next_valley = ValleyIterator { valley }.next().unwrap();
