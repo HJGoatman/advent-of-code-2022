@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-pub type Ordinate = u16;
+pub type Ordinate = u64;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Coordinate {

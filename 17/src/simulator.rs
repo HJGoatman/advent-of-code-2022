@@ -1,12 +1,13 @@
 mod chamber;
 mod rock;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::coordinate::{Coordinate, Ordinate};
 use crate::parser::JetDirection;
 use crate::{parser::JetPattern, simulator::rock::create_rock};
 
+use self::rock::RockType;
 use self::{chamber::Chamber, rock::RockIterator};
 
 struct MooreNeighbourhoodIterator {
@@ -86,15 +87,28 @@ impl Iterator for MooreNeighbourhoodIterator {
     }
 }
 
-pub fn run_simulation(pattern: &JetPattern, simulation_length: u16) -> Chamber {
+#[derive(Debug, Hash, Eq, PartialEq)]
+struct State {
+    rock_type: RockType,
+    pattern_num: usize,
+    boundary: Vec<Coordinate>,
+}
+
+pub fn run_simulation(pattern: &JetPattern, simulation_length: u64) -> Chamber {
     let mut rock_iterator = RockIterator { start_index: 0 };
     let mut chamber = Chamber {
         width: 7,
         rocks: HashSet::new(),
+        cycle_height: 0,
     };
+    let mut states = HashMap::new();
+    let mut has_used_repeat = false;
 
-    let mut pattern_iter = pattern.iter().cycle();
-    for _ in 0..simulation_length {
+    let mut pattern_iter = pattern.iter().enumerate().cycle();
+
+    let mut i = 0;
+
+    while i < simulation_length {
         let rock_type = rock_iterator.next().unwrap();
 
         log::debug!("A new rock ({:?}) begins falling:", rock_type);
@@ -103,9 +117,9 @@ pub fn run_simulation(pattern: &JetPattern, simulation_length: u16) -> Chamber {
 
         let mut rock = create_rock(&rock_type, current_height);
 
-        loop {
-            let this_pattern = pattern_iter.next().unwrap();
+        let (mut pattern_num, mut this_pattern) = pattern_iter.next().unwrap();
 
+        loop {
             if let JetDirection::Left = this_pattern {
                 if is_blocked_left(&rock, &chamber.rocks) {
                     log::debug!("Jet of gas pushes rock left, but nothing happens:");
@@ -127,6 +141,8 @@ pub fn run_simulation(pattern: &JetPattern, simulation_length: u16) -> Chamber {
                 log::debug!("Rock falls 1 unit:");
                 rock.iter_mut().for_each(|part| part.y -= 1);
             }
+
+            (pattern_num, this_pattern) = pattern_iter.next().unwrap();
         }
 
         // Add rock
@@ -134,12 +150,70 @@ pub fn run_simulation(pattern: &JetPattern, simulation_length: u16) -> Chamber {
             chamber.rocks.insert(part);
         });
 
-        chamber.rocks = boundry_trace(&chamber.rocks, chamber.width);
-
         log::debug!("\n{}", chamber);
+
+        if !has_used_repeat {
+            chamber.rocks = boundry_trace(&chamber.rocks, chamber.width);
+
+            let boundary = normalise_chamber(&chamber.rocks);
+
+            let state = State {
+                rock_type,
+                pattern_num,
+                boundary,
+            };
+
+            if let Some((previous_i, previous_height)) = states.get(&state) {
+                log::info!("Found Cycle!");
+
+                let current_height = chamber.get_height();
+
+                let change_in_increment = i - previous_i;
+                let change_in_height = current_height - previous_height;
+
+                let remaining_increments = simulation_length - i;
+
+                let repeats = remaining_increments / change_in_increment;
+                let remaining = remaining_increments % change_in_increment;
+
+                let new_height = change_in_height * repeats;
+                chamber.cycle_height = new_height;
+
+                i = simulation_length - remaining;
+
+                log::info!("New i = {}", i);
+
+                log::info!(
+                    "There are {} many repeats remaining, then there's a remaining {} iterations",
+                    repeats,
+                    remaining
+                );
+                log::info!("The change of height per cycle is {}, this means that the height will increase by {}.", change_in_height, new_height);
+
+                has_used_repeat = true;
+                continue;
+            }
+
+            states.insert(state, (i, chamber.get_height()));
+        }
+
+        i += 1;
     }
 
     chamber
+}
+
+fn normalise_chamber(rocks: &HashSet<Coordinate>) -> Vec<Coordinate> {
+    let min_x = rocks.iter().map(|coord| coord.x).min().unwrap();
+    let min_y = rocks.iter().map(|coord| coord.y).min().unwrap();
+
+    rocks
+        .iter()
+        .map(|coord| Coordinate {
+            x: coord.x - min_x,
+            y: coord.y - min_y,
+        })
+        .collect()
 }
 
 fn is_blocked_below(rock: &[Coordinate], rocks: &HashSet<Coordinate>) -> bool {

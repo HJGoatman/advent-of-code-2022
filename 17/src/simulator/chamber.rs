@@ -3,8 +3,9 @@ use std::{cmp::Ordering, collections::HashSet, fmt::Display};
 use crate::coordinate::{Coordinate, Ordinate};
 
 pub struct Chamber {
-    pub width: u16,
+    pub width: u64,
     pub rocks: HashSet<Coordinate>,
+    pub cycle_height: u64,
 }
 
 impl Chamber {
@@ -13,6 +14,10 @@ impl Chamber {
             Some(height) => height + 1,
             None => 0,
         }
+    }
+
+    pub fn get_adjusted_height(&self) -> Ordinate {
+        self.get_height() + self.cycle_height - 1
     }
 }
 

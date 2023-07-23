@@ -11,8 +11,8 @@ fn main() {
     env_logger::init();
     let input = load_input();
     let jet_pattern = parse_jet_pattern(&input);
-    let chamber = run_simulation(&jet_pattern, 2022);
-    let tower_height = &chamber.get_height();
+    let chamber = run_simulation(&jet_pattern, 1000000000000);
+    let tower_height = &chamber.get_adjusted_height();
     println!("{}", tower_height);
 }
 

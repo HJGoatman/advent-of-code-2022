@@ -1,6 +1,6 @@
 use crate::coordinate::{Coordinate, Ordinate};
 
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub enum RockType {
     Minus,
     Plus,
