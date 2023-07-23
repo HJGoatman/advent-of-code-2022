@@ -66,12 +66,12 @@ impl Ord for Coordinate {
 
 struct Chamber {
     width: u16,
-    rocks: Vec<Coordinate>,
+    rocks: HashSet<Coordinate>,
 }
 
 impl Display for Chamber {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut sorted_rocks = self.rocks.clone();
+        let mut sorted_rocks: Vec<Coordinate> = self.rocks.iter().cloned().collect();
         sorted_rocks.sort_by(|a, b| {
             let mut ordering = b.y.cmp(&a.y);
             if ordering == Ordering::Equal {
@@ -221,77 +221,74 @@ fn create_rock(rock_type: &RockType, current_height: Ordinate) -> Vec<Coordinate
     }
 }
 
-fn get_current_height(rocks: &[Coordinate]) -> Ordinate {
-    if rocks.len() == 0 {
-        return 0;
+fn get_tower_height(rocks: &HashSet<Coordinate>) -> Ordinate {
+    match rocks.iter().map(|coor| coor.y).max() {
+        Some(height) => height + 1,
+        None => 0,
     }
-
-    if let Some(rock) = rocks.get(rocks.len() - 1) {
-        return rock.y + 1;
-    }
-    0
 }
 
-fn is_blocked_below(rock: &[Coordinate], rocks: &[Coordinate]) -> bool {
+fn is_blocked_below(rock: &[Coordinate], rocks: &HashSet<Coordinate>) -> bool {
     let is_at_floor = rock.get(0).unwrap().y == 0;
+
+    if is_at_floor {
+        return true;
+    }
+
     let has_rock_below = rock.iter().any(|part| {
-        rocks
-            .iter()
-            .rev()
-            .any(|rock| (rock.y == (part.y - 1)) && (rock.x == part.x))
+        rocks.contains(&Coordinate {
+            x: part.x,
+            y: part.y - 1,
+        })
     });
     is_at_floor || has_rock_below
 }
 
-fn is_blocked_left(rock: &[Coordinate], rocks: &[Coordinate]) -> bool {
+fn is_blocked_left(rock: &[Coordinate], rocks: &HashSet<Coordinate>) -> bool {
     let is_at_wall = rock.iter().any(|part| part.x == 0);
 
     if is_at_wall {
         return true;
     }
 
-    let has_rock_left = rock
-        .iter()
-        .any(|part| rocks.iter().any(|r| (r.y == part.y) && (r.x == part.x - 1)));
+    let has_rock_left = rock.iter().any(|part| {
+        rocks.contains(&Coordinate {
+            x: part.x - 1,
+            y: part.y,
+        })
+    });
     is_at_wall || has_rock_left
 }
 
-fn is_blocked_right(rock: &[Coordinate], rocks: &[Coordinate]) -> bool {
+fn is_blocked_right(rock: &[Coordinate], rocks: &HashSet<Coordinate>) -> bool {
     let is_at_wall = rock.iter().any(|part| part.x == 6);
-    let has_rock_left = rock
-        .iter()
-        .any(|part| rocks.iter().any(|r| (r.y == part.y) && (r.x == part.x + 1)));
+    let has_rock_left = rock.iter().any(|part| {
+        rocks.contains(&Coordinate {
+            x: part.x + 1,
+            y: part.y,
+        })
+    });
     is_at_wall || has_rock_left
 }
 
-fn has_unique_elements<T>(iter: T) -> bool
-where
-    T: IntoIterator,
-    T::Item: Eq + Hash,
-{
-    let mut uniq = HashSet::new();
-    iter.into_iter().all(move |x| uniq.insert(x))
-}
-
-fn get_tower_height(pattern: &JetPattern, simulation_length: u16) -> Ordinate {
+fn run_simulation(pattern: &JetPattern, simulation_length: u16) -> Chamber {
     let mut rock_iterator = RockIterator { start_index: 0 };
     let mut chamber = Chamber {
         width: 7,
-        rocks: Vec::new(),
+        rocks: HashSet::new(),
     };
 
     let mut pattern_iter = pattern.iter().cycle();
     for _ in 0..simulation_length {
-        log::debug!("A new rock begins falling:");
-
         let rock_type = rock_iterator.next().unwrap();
-        let current_height = get_current_height(&chamber.rocks);
+
+        log::debug!("A new rock ({:?}) begins falling:", rock_type);
+
+        let current_height = get_tower_height(&chamber.rocks);
 
         let mut rock = create_rock(&rock_type, current_height);
 
         loop {
-            // log::debug!("Falling Rock: {:?}", rock);
-
             let this_pattern = pattern_iter.next().unwrap();
 
             if let JetDirection::Left = this_pattern {
@@ -301,13 +298,11 @@ fn get_tower_height(pattern: &JetPattern, simulation_length: u16) -> Ordinate {
                     log::debug!("Jet of gas pushes rock left");
                     rock.iter_mut().for_each(|part| part.x -= 1);
                 }
+            } else if is_blocked_right(&rock, &chamber.rocks) {
+                log::debug!("Jet of gas pushes rock right, but nothing happens:");
             } else {
-                if is_blocked_right(&rock, &chamber.rocks) {
-                    log::debug!("Jet of gas pushes rock right, but nothing happens:");
-                } else {
-                    log::debug!("Jet of gas pushes rock right:");
-                    rock.iter_mut().for_each(|part| part.x += 1);
-                }
+                log::debug!("Jet of gas pushes rock right:");
+                rock.iter_mut().for_each(|part| part.x += 1);
             }
 
             if is_blocked_below(&rock, &chamber.rocks) {
@@ -320,31 +315,211 @@ fn get_tower_height(pattern: &JetPattern, simulation_length: u16) -> Ordinate {
         }
 
         // Add rock
-        chamber.rocks.append(&mut rock);
-        // log::debug!("{:?}", chamber.rocks);
-        chamber.rocks.sort();
+        rock.into_iter().for_each(|part| {
+            chamber.rocks.insert(part);
+        });
 
-        // assert!(has_unique_elements(&chamber.rocks));
+        chamber.rocks = boundry_trace(&chamber.rocks, chamber.width);
 
         log::debug!("\n{}", chamber);
     }
 
-    get_current_height(&chamber.rocks)
+    chamber
+}
+
+struct MooreNeighbourhoodIterator {
+    iterator: Box<dyn Iterator<Item = Coordinate>>,
+}
+
+impl MooreNeighbourhoodIterator {
+    fn new(centre_point: Coordinate, start: Option<Coordinate>) -> MooreNeighbourhoodIterator {
+        let mut neighbours = Vec::new();
+
+        neighbours.push(Coordinate {
+            x: centre_point.x,
+            y: centre_point.y + 1,
+        });
+        neighbours.push(Coordinate {
+            x: centre_point.x + 1,
+            y: centre_point.y + 1,
+        });
+        neighbours.push(Coordinate {
+            x: centre_point.x + 1,
+            y: centre_point.y,
+        });
+
+        if centre_point.y > 0 {
+            neighbours.push(Coordinate {
+                x: centre_point.x + 1,
+                y: centre_point.y - 1,
+            });
+        }
+
+        if centre_point.y > 0 {
+            neighbours.push(Coordinate {
+                x: centre_point.x,
+                y: centre_point.y - 1,
+            });
+        }
+
+        if centre_point.x > 0 && centre_point.y > 0 {
+            neighbours.push(Coordinate {
+                x: centre_point.x - 1,
+                y: centre_point.y - 1,
+            });
+        }
+
+        if centre_point.x > 0 {
+            neighbours.push(Coordinate {
+                x: centre_point.x - 1,
+                y: centre_point.y,
+            });
+        }
+
+        if centre_point.x > 0 {
+            neighbours.push(Coordinate {
+                x: centre_point.x - 1,
+                y: centre_point.y + 1,
+            });
+        }
+
+        if let Some(start) = start {
+            // log::debug!("{:?}", start);
+            let index_of_start = neighbours.iter().position(|&r| r == start).unwrap();
+            neighbours.rotate_left(index_of_start);
+            // log::debug!("{:?}", neighbours);
+        }
+
+        MooreNeighbourhoodIterator {
+            iterator: Box::new(neighbours.into_iter()),
+        }
+    }
+}
+
+impl Iterator for MooreNeighbourhoodIterator {
+    type Item = Coordinate;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iterator.next()
+    }
 }
 
 fn main() {
     env_logger::init();
     let input = load_input();
     let jet_pattern = parse_jet_pattern(&input);
-    let tower_height = get_tower_height(&jet_pattern, 2022);
+    let chamber = run_simulation(&jet_pattern, 2022);
+    let tower_height = get_tower_height(&chamber.rocks);
     println!("{}", tower_height);
+}
+
+fn boundry_trace(chamber: &HashSet<Coordinate>, width: Ordinate) -> HashSet<Coordinate> {
+    let mut chamber: HashSet<Coordinate> = chamber.iter().cloned().collect();
+
+    log::trace!("Original: {:#?}", chamber);
+
+    const SHIFT_AMOUNT: Ordinate = 2;
+
+    // Shift all points
+    chamber = chamber
+        .into_iter()
+        .map(|coord| Coordinate {
+            x: coord.x + SHIFT_AMOUNT,
+            y: coord.y + SHIFT_AMOUNT,
+        })
+        .collect();
+
+    log::trace!("Shifted: {:#?}", chamber);
+
+    let right_wall_x = width + 2;
+
+    // Add Walls
+    let max_y = chamber.iter().map(|c| c.y).max().unwrap();
+    let left_wall = (1..max_y + 1).map(|y| Coordinate { x: 1, y }).collect();
+    let right_wall = (1..max_y + 1)
+        .map(|y| Coordinate { x: right_wall_x, y })
+        .collect();
+
+    // Add Floor
+    let floor = (2..right_wall_x).map(|x| Coordinate { x, y: 1 }).collect();
+
+    chamber = chamber
+        .union(&left_wall)
+        .cloned()
+        .collect::<HashSet<Coordinate>>()
+        .union(&right_wall)
+        .cloned()
+        .collect::<HashSet<Coordinate>>()
+        .union(&floor)
+        .cloned()
+        .collect();
+
+    log::trace!("Walls and Floor: {:#?}", chamber);
+
+    // Boundary Trace
+    chamber = _boundry_trace(&chamber);
+
+    log::trace!("After Trace: {:#?}", chamber);
+
+    // Remove Floor
+    // Remove Walls
+    chamber.retain(|coord| !(coord.x == 1 || coord.x == right_wall_x || coord.y == 1));
+
+    log::trace!("Removed Floor: {:#?}", chamber);
+
+    // Shift points back
+    chamber = chamber
+        .into_iter()
+        .map(|coord| Coordinate {
+            x: coord.x - SHIFT_AMOUNT,
+            y: coord.y - SHIFT_AMOUNT,
+        })
+        .collect();
+
+    log::trace!("Shifted Back: {:#?}", chamber);
+
+    chamber
+}
+
+fn _boundry_trace(chamber: &HashSet<Coordinate>) -> HashSet<Coordinate> {
+    // Add the walls and floor as coordinates
+
+    // Get the smallest x and largest y coordinate as start.
+    // The Bottom should be a boundry.
+
+    let start = *chamber
+        .iter()
+        .max_by(|a, b| a.x.cmp(&b.x).reverse().then(a.y.cmp(&b.y)))
+        .unwrap();
+
+    let mut boundary: HashSet<Coordinate> = HashSet::new();
+
+    boundary.insert(start);
+
+    let mut neighbourhood_iterator = MooreNeighbourhoodIterator::new(start, None);
+
+    let mut previous_point = None;
+    let mut current_point = neighbourhood_iterator.next().unwrap();
+
+    while current_point != start {
+        if chamber.contains(&current_point) {
+            boundary.insert(current_point);
+            neighbourhood_iterator = MooreNeighbourhoodIterator::new(current_point, previous_point);
+        }
+
+        previous_point = Some(current_point);
+        current_point = neighbourhood_iterator.next().unwrap();
+    }
+
+    boundary.into_iter().collect()
 }
 
 #[cfg(test)]
 mod tests {
     use crate::JetDirection::{Left, Right};
     use crate::{
-        create_rock, get_tower_height, parse_jet_pattern, Coordinate, JetPattern, RockType,
+        create_rock, get_tower_height, parse_jet_pattern, run_simulation, Coordinate, JetPattern,
+        RockType,
     };
 
     fn get_test_jet_pattern() -> JetPattern {
@@ -368,7 +543,8 @@ mod tests {
     fn test_get_tower_height() {
         let input = get_test_jet_pattern();
         let expected = 3068;
-        let actual = get_tower_height(&input, 2022);
+        let actual_chamber = run_simulation(&input, 2022);
+        let actual = get_tower_height(&actual_chamber.rocks);
         assert_eq!(expected, actual);
     }
 
