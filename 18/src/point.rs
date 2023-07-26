@@ -2,7 +2,7 @@ use std::{num::ParseIntError, str::FromStr};
 
 pub type Ordinate = u8;
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]
 pub struct Point {
     pub x: Ordinate,
     pub y: Ordinate,

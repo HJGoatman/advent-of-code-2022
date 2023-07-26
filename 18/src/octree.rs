@@ -252,4 +252,8 @@ impl Tree {
             (Equal | Greater, Equal | Greater, Equal | Greater) => Octant::TopRightBack,
         }
     }
+
+    pub(crate) fn get_max_point(&self) -> Point {
+        self.max_point
+    }
 }

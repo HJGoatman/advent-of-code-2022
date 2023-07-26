@@ -1,7 +1,7 @@
 mod octree;
 mod point;
 
-use std::{env, fs, num::ParseIntError};
+use std::{collections::HashSet, env, fs, num::ParseIntError};
 
 use octree::{OctreeError, Tree};
 use point::{Ordinate, Point};
@@ -18,46 +18,60 @@ fn parse_input(input: &str) -> Result<Vec<Point>, ParseIntError> {
         .collect::<Result<Vec<Point>, ParseIntError>>()
 }
 
+fn get_adjacent_positions(position: Point, upper_bound: Ordinate) -> Vec<Point> {
+    let mut adjacent_positions = Vec::new();
+
+    if position.x < upper_bound {
+        adjacent_positions.push(Point {
+            x: position.x + 1,
+            ..position
+        })
+    }
+
+    if position.y < upper_bound {
+        adjacent_positions.push(Point {
+            y: position.y + 1,
+            ..position
+        })
+    }
+
+    if position.z < upper_bound {
+        adjacent_positions.push(Point {
+            z: position.z + 1,
+            ..position
+        })
+    }
+
+    if position.x > 0 {
+        adjacent_positions.push(Point {
+            x: position.x - 1,
+            ..position
+        })
+    }
+
+    if position.y > 0 {
+        adjacent_positions.push(Point {
+            y: position.y - 1,
+            ..position
+        })
+    }
+
+    if position.z > 0 {
+        adjacent_positions.push(Point {
+            z: position.z - 1,
+            ..position
+        })
+    }
+
+    adjacent_positions
+}
+
 fn count_open_facing_sides(positions: &[Point], tree: &Tree) -> usize {
     let mut total_connections = 0;
 
     for position in positions {
         let position = *position;
-        let mut adjacent_positions = vec![
-            Point {
-                x: position.x + 1,
-                ..position
-            },
-            Point {
-                y: position.y + 1,
-                ..position
-            },
-            Point {
-                z: position.z + 1,
-                ..position
-            },
-        ];
-
-        if position.x > 0 {
-            adjacent_positions.push(Point {
-                x: position.x - 1,
-                ..position
-            })
-        }
-
-        if position.y > 0 {
-            adjacent_positions.push(Point {
-                y: position.y - 1,
-                ..position
-            })
-        }
-
-        if position.z > 0 {
-            adjacent_positions.push(Point {
-                z: position.z - 1,
-                ..position
-            })
-        }
+        let adjacent_positions = get_adjacent_positions(position, 100);
 
         for adjacent_position in adjacent_positions {
             if let Ok(true) = tree.find(adjacent_position) {
@@ -69,15 +83,57 @@ fn count_open_facing_sides(positions: &[Point], tree: &Tree) -> usize {
     6 * positions.len() - total_connections
 }
 
+fn count_outside_faces(start: Point, tree: &Tree) -> usize {
+    let mut visited: HashSet<Point> = HashSet::new();
+    let mut stack = Vec::new();
+    let mut total_connections = 0;
+
+    stack.push(start);
+
+    let max = tree.get_max_point().x + 5;
+
+    while !stack.is_empty() {
+        let current = stack.pop().unwrap();
+
+        if !visited.contains(&current) {
+            match tree.find(current) {
+                Ok(true) => {
+                    total_connections += 1;
+                }
+                _ => {
+                    visited.insert(current);
+                    for position in get_adjacent_positions(current, max) {
+                        stack.push(position);
+                    }
+                }
+            }
+        }
+    }
+
+    total_connections
+}
+
 fn main() {
     env_logger::init();
 
     let input = load_input();
     let positions = parse_input(&input).expect("Unable to Parse Input!");
+    let positions: Vec<Point> = positions
+        .iter()
+        .map(|pos| Point {
+            x: pos.x + 1,
+            y: pos.y + 1,
+            z: pos.z + 1,
+        })
+        .collect();
     let tree = create_tree(positions.clone()).expect("Unable to Create Tree!");
-    log::debug!("{:#?}", tree);
+    log::debug!("{:?}", tree);
     let num_open_facing_sides = count_open_facing_sides(&positions, &tree);
     println!("{}", num_open_facing_sides);
+
+    let start = Point { x: 0, y: 0, z: 0 };
+    let num_outside_faces = count_outside_faces(start, &tree);
+    println!("{}", num_outside_faces);
 }
 
 fn create_tree(positions: Vec<Point>) -> Result<Tree, OctreeError> {
@@ -111,12 +167,9 @@ fn create_tree(positions: Vec<Point>) -> Result<Tree, OctreeError> {
     };
 
     let mut tree = Tree::new(min_point, max_point);
-    log::debug!("{:#?}", tree);
 
     for position in positions {
-        log::debug!("{:?}", position);
         tree.insert(position)?;
-        log::debug!("{:#?}", tree);
     }
 
     Ok(tree)
